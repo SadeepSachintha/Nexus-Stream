@@ -1,5 +1,4 @@
 @echo off
-chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 title Nexus Stream - Real-Time Financial Fraud Detection Engine
 
@@ -45,7 +44,7 @@ if not "%~1"=="" (
 :menu
 cls
 echo ========================================================================
-echo   💳 NEXUS STREAM — Real-Time Financial Fraud Detection Platform
+echo   [NEXUS STREAM] Real-Time Financial Fraud Detection Platform
 echo ========================================================================
 echo.
 echo   CORE SERVICES:
@@ -56,7 +55,7 @@ echo     [4] Run Standalone Stream Processor          (Local In-Memory Mode)
 echo.
 echo   MACHINE LEARNING ^& TESTING:
 echo     [5] Train Cost-Sensitive XGBoost Model       (PR-AUC ^& Baseline Export)
-echo     [6] Run Full Automated Pytest Suite         (26 Unit/Integration Tests)
+echo     [6] Run Full Automated Pytest Suite         (27 Unit/Integration Tests)
 echo     [7] Run Concurrency Benchmark CLI            (Sub-15ms SLA Verification)
 echo     [8] Run Headless Locust Load Test            (30 Concurrent Users)
 echo     [9] Launch Locust Load Testing Web UI        (http://localhost:8089)
@@ -84,7 +83,7 @@ if "%choice%"=="0" goto exit_script
 
 echo.
 echo [!] Invalid selection. Please choose an option from 0 to 11.
-timeout /t 2 >nul
+ping 127.0.0.1 -n 2 >nul
 goto menu
 
 :start_api
