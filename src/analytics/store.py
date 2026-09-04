@@ -3,6 +3,9 @@ import os
 import queue
 import threading
 import time
+import sys
+import atexit
+import weakref
 from typing import Any, Dict, List, Optional
 import json
 
@@ -14,6 +17,21 @@ from src.streaming.schemas import (
     DeadLetterEvent,
     DLQSummaryResponse,
 )
+
+_ACTIVE_STORES = weakref.WeakSet()
+
+
+def _cleanup_all_stores():
+    """Teardown hook ensuring all background DuckDB writer threads are joined before interpreter exit."""
+    stores = list(_ACTIVE_STORES)
+    for s in stores:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+atexit.register(_cleanup_all_stores)
 
 
 class DuckDBAnalyticsStore:
@@ -34,8 +52,42 @@ class DuckDBAnalyticsStore:
         self._initialized = True
         self._writer_thread = threading.Thread(target=self._background_flush_loop, daemon=True)
         self._writer_thread.start()
+        _ACTIVE_STORES.add(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        """Gracefully halts the background flush thread and executes final queue sync."""
+        with self._lock:
+            if not self._running:
+                return
+            self._running = False
+
+        if hasattr(self, "_writer_thread") and self._writer_thread.is_alive():
+            if threading.current_thread() != self._writer_thread:
+                try:
+                    self._writer_thread.join(timeout=0.5)
+                except Exception:
+                    pass
+
+        try:
+            self.flush()
+        except Exception:
+            pass
 
     def _raw_connect(self) -> duckdb.DuckDBPyConnection:
+        if getattr(sys, "is_finalizing", lambda: False)():
+            raise RuntimeError("Python interpreter is shutting down")
         return duckdb.connect(self.db_path)
 
     def _get_connection(self) -> duckdb.DuckDBPyConnection:
@@ -44,7 +96,7 @@ class DuckDBAnalyticsStore:
         return self._raw_connect()
 
     def flush(self) -> None:
-        if not self._initialized:
+        if not self._initialized or getattr(sys, "is_finalizing", lambda: False)():
             return
 
         raw_items = []
@@ -67,6 +119,8 @@ class DuckDBAnalyticsStore:
 
         if raw_items or scored_items or alerts:
             with self._lock:
+                if getattr(sys, "is_finalizing", lambda: False)():
+                    return
                 conn = self._raw_connect()
                 try:
                     if raw_items:
@@ -107,10 +161,14 @@ class DuckDBAnalyticsStore:
     def _background_flush_loop(self) -> None:
         while self._running:
             try:
-                time.sleep(0.02)
+                if getattr(sys, "is_finalizing", lambda: False)():
+                    break
+                time.sleep(0.05)
+                if not self._running or getattr(sys, "is_finalizing", lambda: False)():
+                    break
                 self.flush()
             except Exception:
-                pass
+                break
 
     def _init_db(self) -> None:
         with self._lock:

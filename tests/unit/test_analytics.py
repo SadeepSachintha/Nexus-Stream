@@ -9,7 +9,10 @@ from src.streaming.schemas import RawTransaction, EnrichedTransaction, FraudPred
 def temp_store(tmp_path):
     db_file = str(tmp_path / "test_analytics.duckdb")
     store = DuckDBAnalyticsStore(db_path=db_file)
-    return store
+    try:
+        yield store
+    finally:
+        store.close()
 
 
 def test_duckdb_raw_insertion(temp_store):

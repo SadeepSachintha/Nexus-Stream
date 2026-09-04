@@ -70,6 +70,11 @@ async def lifespan(app: FastAPI):
 
     yield
     print("[*] Shutting down Nexus Stream API...")
+    if store is not None:
+        try:
+            store.close()
+        except Exception:
+            pass
 
 
 app = FastAPI(

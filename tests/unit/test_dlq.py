@@ -11,7 +11,11 @@ from src.inference.app import app
 @pytest.fixture
 def temp_store(tmp_path):
     db_file = str(tmp_path / "test_dlq.duckdb")
-    return DuckDBAnalyticsStore(db_path=db_file)
+    store = DuckDBAnalyticsStore(db_path=db_file)
+    try:
+        yield store
+    finally:
+        store.close()
 
 
 def test_dlq_duckdb_storage_and_summary(temp_store):
@@ -54,21 +58,23 @@ def test_stream_processor_poison_pill_isolation(tmp_path):
         db_path=db_file,
         use_local_predictor=True,
     )
+    try:
+        # 1. Simulate malformed JSON poison pill
+        bad_json_str = '{"transaction_id": "tx_bad", "amount": 100.0, "unclosed...'
+        dlq_ev1 = processor.handle_poison_pill(bad_json_str, "MALFORMED_JSON", "JSONDecodeError")
+        assert dlq_ev1.error_type == "MALFORMED_JSON"
+        assert dlq_ev1.status == "PENDING"
 
-    # 1. Simulate malformed JSON poison pill
-    bad_json_str = '{"transaction_id": "tx_bad", "amount": 100.0, "unclosed...'
-    dlq_ev1 = processor.handle_poison_pill(bad_json_str, "MALFORMED_JSON", "JSONDecodeError")
-    assert dlq_ev1.error_type == "MALFORMED_JSON"
-    assert dlq_ev1.status == "PENDING"
+        # 2. Simulate schema validation failure (missing user_id, invalid amount)
+        bad_schema_str = json.dumps({"transaction_id": "tx_no_user", "amount": -50.0})
+        dlq_ev2 = processor.handle_poison_pill(bad_schema_str, "SCHEMA_VALIDATION_ERROR", "amount must be > 0")
+        assert dlq_ev2.error_type == "SCHEMA_VALIDATION_ERROR"
 
-    # 2. Simulate schema validation failure (missing user_id, invalid amount)
-    bad_schema_str = json.dumps({"transaction_id": "tx_no_user", "amount": -50.0})
-    dlq_ev2 = processor.handle_poison_pill(bad_schema_str, "SCHEMA_VALIDATION_ERROR", "amount must be > 0")
-    assert dlq_ev2.error_type == "SCHEMA_VALIDATION_ERROR"
-
-    # Verify both isolated in DuckDB without pipeline stall
-    events = processor.store.get_dlq_events()
-    assert len(events) == 2
+        # Verify both isolated in DuckDB without pipeline stall
+        events = processor.store.get_dlq_events()
+        assert len(events) == 2
+    finally:
+        processor.store.close()
 
 
 def test_api_dlq_lifecycle_and_replay():
