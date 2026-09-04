@@ -28,6 +28,10 @@ class EnrichedTransaction(RawTransaction):
     geo_distance_velocity_kmh: float = Field(default=0.0, description="Haversine velocity from previous transaction in km/h")
     is_night_transaction: int = Field(default=0, description="1 if transaction occurred between 00:00 and 06:00 local time, else 0")
     category_risk_index: float = Field(default=0.1, description="Baseline risk weighting for merchant category")
+    device_card_count: int = Field(default=1, description="Number of distinct cards observed on this device in the last 24h")
+    card_device_count: int = Field(default=1, description="Number of distinct devices used by this card in the last 24h")
+    ring_cluster_size: int = Field(default=1, description="Total connected entities in the bipartite fraud ring cluster")
+    is_fraud_ring_suspected: bool = Field(default=False, description="True if device sharing indicates a coordinated fraud ring")
 
 
 class FraudPredictionResponse(BaseModel):

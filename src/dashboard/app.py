@@ -207,10 +207,11 @@ with c5:
 st.write("")
 
 # Navigation Tabs
-tab_alerts, tab_analytics, tab_simulator, tab_model = st.tabs([
+tab_alerts, tab_analytics, tab_simulator, tab_graph, tab_model = st.tabs([
     "🚨 Live Alerts & Dispute Triage",
     "📊 Real-Time Analytics & Risk Matrix",
     "⚡ Instant Transaction Scoring Lab",
+    "🕸️ Fraud Ring Network Explorer",
     "🎯 Model Explainability & Thresholds"
 ])
 
@@ -392,7 +393,126 @@ with tab_simulator:
         else:
             st.success("No critical risk factors triggered. Transaction approved.")
 
-# --- TAB 4: Model Explainability & Thresholds ---
+# --- TAB 4: Fraud Ring Network Explorer ---
+with tab_graph:
+    st.subheader("🕸️ Graph-Based Fraud Ring & Botnet Explorer")
+    st.markdown("Real-time bipartite entity graph detecting card-sharing botnets and synthetic identity rings.")
+
+    graph_engine = feature_mgr.graph_engine
+    rings = graph_engine.get_detected_fraud_rings()
+    vis_data = graph_engine.get_visualization_data()
+
+    total_devices = len(graph_engine.devices_to_cards)
+    total_cards = len(graph_engine.cards_to_devices)
+    max_cluster = max([r["total_entities"] for r in rings], default=0)
+
+    g_c1, g_c2, g_c3, g_c4 = st.columns(4)
+    g_c1.metric("Monitored Devices", f"{total_devices:,}")
+    g_c2.metric("Monitored Cards", f"{total_cards:,}")
+    g_c3.metric("Active Fraud Rings", f"{len(rings):,}", delta="High Risk" if rings else "Clean")
+    g_c4.metric("Largest Cluster Size", f"{max_cluster} Entities")
+
+    st.write("")
+
+    # Interactive Graph Visualizer
+    if vis_data["nodes"]:
+        edge_x = []
+        edge_y = []
+        for e in vis_data["edges"]:
+            edge_x.extend([e["x0"], e["x1"], None])
+            edge_y.extend([e["y0"], e["y1"], None])
+
+        edge_trace = go.Scatter(
+            x=edge_x, y=edge_y,
+            line=dict(width=1.2, color='#475569'),
+            hoverinfo='none',
+            mode='lines'
+        )
+
+        node_x = [n["x"] for n in vis_data["nodes"]]
+        node_y = [n["y"] for n in vis_data["nodes"]]
+        node_text = [f"<b>{n['type'].upper()}</b>: {n['id']}<br>Connections: {n['degree']}<br>Status: {'🚨 SUSPICIOUS RING' if n['is_suspicious'] else 'NORMAL'}" for n in vis_data["nodes"]]
+        node_colors = ['#ef4444' if n['is_suspicious'] else ('#38bdf8' if n['type'] == 'card' else '#a855f7') for n in vis_data["nodes"]]
+        node_symbols = ['circle' if n['type'] == 'card' else 'diamond' for n in vis_data["nodes"]]
+
+        node_trace = go.Scatter(
+            x=node_x, y=node_y,
+            mode='markers+text',
+            hoverinfo='text',
+            text=[n['id'][:10] for n in vis_data["nodes"]],
+            textposition="top center",
+            hovertext=node_text,
+            marker=dict(
+                color=node_colors,
+                size=18,
+                symbol=node_symbols,
+                line=dict(width=2, color='#0f172a')
+            )
+        )
+
+        fig_net = go.Figure(
+            data=[edge_trace, node_trace],
+            layout=go.Layout(
+                title=dict(text="<b>Bipartite Entity Network (Cards & Devices)</b>", font=dict(color="#f8fafc")),
+                showlegend=False,
+                hovermode='closest',
+                margin=dict(b=20, l=20, r=20, t=40),
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                template="plotly_dark",
+                height=480,
+            )
+        )
+        st.plotly_chart(fig_net, use_container_width=True)
+    else:
+        st.info("No entity relationships recorded yet. Click the simulation button below to inject a multi-card fraud ring.")
+
+    # Ring Drilldown and Action Table
+    if rings:
+        st.markdown("##### Detected Fraud Syndicates & Compromised Devices")
+        df_rings = pd.DataFrame([{
+            "Anchor Device ID": r["anchor_device"],
+            "Stolen Cards Linked": r["card_count"],
+            "Syndicate Cluster Size": r["total_entities"],
+            "Associated Cards": ", ".join(r["cards"][:4]) + ("..." if len(r["cards"]) > 4 else "")
+        } for r in rings])
+        st.dataframe(df_rings, use_container_width=True)
+
+    # Simulation Injection Button
+    col_sim_btn, _ = st.columns([1.5, 2])
+    with col_sim_btn:
+        if st.button("🚨 Inject Synthetic Fraud Ring (5 Cards on 1 Device)", use_container_width=True):
+            shared_dev = f"dev_botnet_ring_{int(time.time())}"
+            now = time.time()
+            for k in range(5):
+                card_k = f"card_stolen_{k}_{int(time.time())%10000}"
+                test_tx = EnrichedTransaction(
+                    transaction_id=f"tx_ring_{k}_{int(time.time())}",
+                    user_id=f"usr_victim_{k}",
+                    card_id=card_k,
+                    amount=round(850.0 + k * 120, 2),
+                    currency="USD",
+                    merchant_id="merch_crypto_99",
+                    merchant_category="crypto",
+                    latitude=40.7128,
+                    longitude=-74.0060,
+                    timestamp=now + (k * 20),
+                    device_id=shared_dev,
+                    tx_count_last_10m=k + 1,
+                    tx_count_last_1h=k + 1,
+                    amount_rolling_avg_1h=850.0,
+                    amount_deviation_from_avg=2.5,
+                    geo_distance_velocity_kmh=15.0,
+                    is_night_transaction=0,
+                    category_risk_index=0.95,
+                )
+                feature_mgr.enrich(test_tx)
+                pred_res = local_predictor.predict(test_tx)
+                store.insert_scored_transaction(test_tx, pred_res)
+            st.success(f"Injected 5-card fraud ring originating from device '{shared_dev}'!")
+            st.rerun()
+
+# --- TAB 5: Model Explainability & Thresholds ---
 with tab_model:
     st.subheader("Model Performance & Threshold Calibration")
     st.markdown("Explore cost-sensitive XGBoost feature importances and decision boundary tuning.")

@@ -171,17 +171,39 @@ class CardSlidingWindowState:
         )
 
 
-class StreamFeatureStateManager:
-    """Thread-safe / multi-key state manager indexing states by card_id or user_id."""
+from src.streaming.graph import FraudRingGraphEngine
 
-    def __init__(self):
+
+class StreamFeatureStateManager:
+    """
+    Thread-safe / multi-key state manager indexing rolling card windows
+    and maintaining the bipartite entity fraud ring graph.
+    """
+
+    def __init__(self, graph_ttl_seconds: float = 86400.0, ring_threshold: int = 3):
         self._states: Dict[str, CardSlidingWindowState] = {}
+        self.graph_engine = FraudRingGraphEngine(ttl_seconds=graph_ttl_seconds, ring_threshold=ring_threshold)
 
     def enrich(self, tx: RawTransaction) -> EnrichedTransaction:
         key = tx.card_id or tx.user_id
         if key not in self._states:
             self._states[key] = CardSlidingWindowState()
-        return self._states[key].update_and_enrich(tx)
+        enriched = self._states[key].update_and_enrich(tx)
+
+        # Graph entity relationship tracking
+        dev_card_cnt, card_dev_cnt, cluster_sz, is_ring = self.graph_engine.record_interaction(
+            card_id=tx.card_id,
+            device_id=tx.device_id,
+            timestamp=tx.timestamp,
+        )
+
+        enriched.device_card_count = dev_card_cnt
+        enriched.card_device_count = card_dev_cnt
+        enriched.ring_cluster_size = cluster_sz
+        enriched.is_fraud_ring_suspected = is_ring
+
+        return enriched
 
     def reset(self) -> None:
         self._states.clear()
+        self.graph_engine.reset()

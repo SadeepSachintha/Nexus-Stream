@@ -118,3 +118,22 @@ class UserProfile:
             device_id=f"dev_foreign_ip_{random.randint(1, 255)}",
             is_fraud_ground_truth=True,
         )
+
+    def generate_fraud_ring_transaction(self, current_time: float, shared_device_id: str) -> RawTransaction:
+        """Coordinated fraud ring attack: distinct cardholder transacting from a shared botnet device."""
+        self.last_tx_time = current_time
+        return RawTransaction(
+            transaction_id=f"tx_{uuid.uuid4().hex[:12]}",
+            user_id=self.user_id,
+            card_id=self.card_id,
+            amount=round(random.uniform(450.0, 2800.0), 2),
+            currency="USD",
+            merchant_id=f"merch_syndicate_{random.randint(10, 50)}",
+            merchant_category=random.choice(["crypto", "electronics", "gaming"]),
+            latitude=round(self.current_lat, 6),
+            longitude=round(self.current_lon, 6),
+            timestamp=current_time,
+            device_id=shared_device_id,
+            is_fraud_ground_truth=True,
+        )
+

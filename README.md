@@ -136,6 +136,10 @@ flowchart LR
 * Leverages DuckDB directly over Parquet/memory buffers to execute sub-millisecond aggregate queries for analyst dashboards without locking the streaming pipeline or incurring external cloud warehouse costs.
 * Zero-copy Apache Arrow integration allows direct handoff between Flink output sinks and in-memory analytical frames.
 
+### 4. Graph-Based Fraud Ring Detection (Bipartite Entity Network)
+* Maintains a real-time in-memory bipartite graph mapping relationships between `cards` and `devices` across a rolling 24-hour event-time window.
+* Automatically identifies automated botnets and synthetic identity syndicates (`device_card_count >= 3`), triggering instant policy overrides and visual network inspection in the Streamlit portal.
+
 ---
 
 ## 5. Repository Structure
@@ -158,6 +162,7 @@ nexus-stream/
 │   ├── streaming/                  # Stateful stream processing pipeline
 │   │   ├── processor.py            # Standalone stream processor (Kafka/generator -> DuckDB)
 │   │   ├── flink_job.py            # Distributed PyFlink DataStream API job
+│   │   ├── graph.py                # In-memory bipartite entity graph & fraud ring clustering
 │   │   ├── features.py             # Haversine distance, travel velocity, rolling Z-score
 │   │   └── schemas.py              # Pydantic data contracts for raw & enriched transactions
 │   ├── inference/                  # FastAPI prediction service & low-latency model serving
@@ -170,9 +175,10 @@ nexus-stream/
 │   └── dashboard/                  # Streamlit dispute triage & live operations portal
 │       └── app.py                  # Real-time KPIs, triage workbench, and scoring lab
 ├── tests/
-│   ├── unit/                       # Unit tests for features, analytics, and inference
+│   ├── unit/                       # Unit tests for features, analytics, graph, and inference
 │   │   ├── test_features.py
 │   │   ├── test_analytics.py
+│   │   ├── test_graph_ring.py
 │   │   └── test_inference.py
 │   └── integration/                # End-to-end streaming pipeline test
 │       └── test_pipeline_e2e.py
@@ -288,19 +294,23 @@ make test
 
 ### Verified Test Results
 ```plaintext
-tests/integration/test_pipeline_e2e.py::test_full_pipeline_end_to_end PASSED [  9%]
-tests/unit/test_analytics.py::test_duckdb_raw_insertion PASSED           [ 18%]
-tests/unit/test_analytics.py::test_duckdb_scored_insertion_and_alerts PASSED [ 27%]
-tests/unit/test_features.py::test_haversine_distance PASSED              [ 36%]
-tests/unit/test_features.py::test_calculate_travel_velocity PASSED       [ 45%]
-tests/unit/test_features.py::test_category_risk PASSED                   [ 54%]
-tests/unit/test_features.py::test_card_sliding_window_state PASSED       [ 63%]
-tests/unit/test_inference.py::test_predictor_scoring_and_latency PASSED  [ 72%]
-tests/unit/test_inference.py::test_api_health_endpoint PASSED            [ 81%]
-tests/unit/test_inference.py::test_api_predict_endpoint PASSED           [ 90%]
+tests/integration/test_pipeline_e2e.py::test_full_pipeline_end_to_end PASSED [  6%]
+tests/unit/test_analytics.py::test_duckdb_raw_insertion PASSED           [ 13%]
+tests/unit/test_analytics.py::test_duckdb_scored_insertion_and_alerts PASSED [ 20%]
+tests/unit/test_features.py::test_haversine_distance PASSED              [ 26%]
+tests/unit/test_features.py::test_calculate_travel_velocity PASSED       [ 33%]
+tests/unit/test_features.py::test_category_risk PASSED                   [ 40%]
+tests/unit/test_features.py::test_card_sliding_window_state PASSED       [ 46%]
+tests/unit/test_graph_ring.py::test_bipartite_graph_ring_detection PASSED [ 53%]
+tests/unit/test_graph_ring.py::test_graph_ttl_pruning PASSED             [ 60%]
+tests/unit/test_graph_ring.py::test_feature_manager_graph_enrichment PASSED [ 66%]
+tests/unit/test_graph_ring.py::test_predictor_fraud_ring_policy_override PASSED [ 73%]
+tests/unit/test_inference.py::test_predictor_scoring_and_latency PASSED  [ 80%]
+tests/unit/test_inference.py::test_api_health_endpoint PASSED            [ 86%]
+tests/unit/test_inference.py::test_api_predict_endpoint PASSED           [ 93%]
 tests/unit/test_inference.py::test_api_analytics_and_metrics PASSED      [100%]
 
-======================= 11 passed in 4.07s =======================
+======================= 15 passed in 4.63s =======================
 ```
 
 ---
@@ -403,9 +413,9 @@ Returns rolling statistics aggregated via DuckDB.
 
 ## 10. Roadmap & Next Steps
 
+- [x] **Graph-Based Fraud Rings**: In-memory bipartite entity network graph (`Cards` $\leftrightarrow$ `Devices`) with 24h sliding TTL and interactive Streamlit explorer.
 - [ ] **Feature Store Integration**: Implement [Feast](https://feast.dev/) for unified online/offline feature consistency across batch retraining and stream scoring.
 - [ ] **Real-Time Concept Drift Detection**: Integrate [Evidently AI](https://www.evidentlyai.com/) to monitor feature drift and classification distribution shifts in DuckDB.
-- [ ] **Graph-Based Fraud Rings**: Add graph-traversal stream enrichment (e.g., Neo4j / Memgraph) for detecting multi-card synthetic identity fraud.
 - [ ] **Cloud Kubernetes Deployment**: Package services into production Helm charts for AWS EKS / GCP GKE with Karpenter autoscaling.
 
 ---

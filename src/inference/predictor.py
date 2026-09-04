@@ -54,6 +54,9 @@ class FraudPredictor:
 
     def _determine_risk_factors(self, tx: EnrichedTransaction, prob: float) -> List[str]:
         factors = []
+        if tx.is_fraud_ring_suspected or tx.device_card_count >= 3:
+            dev_label = tx.device_id or "unknown"
+            factors.append(f"device_sharing_fraud_ring ({tx.device_card_count} cards linked to device '{dev_label}')")
         if tx.amount_deviation_from_avg >= 3.5:
             factors.append(f"amount_deviation_from_avg ({tx.amount_deviation_from_avg:+.1f} std vs historical avg)")
         if tx.geo_distance_velocity_kmh >= 750.0:
@@ -86,8 +89,10 @@ class FraudPredictor:
             raw_pred = self.booster.predict(dmatrix)
             prob = float(raw_pred[0])
 
-        # Hybrid Policy Guardrail (Industry Standard for Physical Impossibility)
-        if tx.geo_distance_velocity_kmh >= 750.0:
+        # Hybrid Policy Guardrail (Industry Standard for Physical Impossibility & Fraud Rings)
+        if tx.is_fraud_ring_suspected or tx.device_card_count >= 3:
+            prob = max(prob, 0.92)
+        elif tx.geo_distance_velocity_kmh >= 750.0:
             prob = max(prob, 0.88)
         elif tx.amount_deviation_from_avg >= 5.0 and tx.category_risk_index >= 0.70:
             prob = max(prob, 0.82)
