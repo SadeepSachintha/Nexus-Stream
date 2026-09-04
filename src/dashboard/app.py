@@ -139,9 +139,22 @@ def fetch_drift_distribution(feature_name: str, limit: int = 200):
 
 
 # --- Sidebar Controls ---
-st.sidebar.image("https://img.icons8.com/isometric/100/credit-card-security.png", width=70)
-st.sidebar.title("Nexus Stream")
-st.sidebar.caption("Real-Time Fraud Detection Engine")
+st.sidebar.markdown("""
+<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 14px;">
+    <div style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); padding: 10px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.45);">
+        <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="20" height="14" x="2" y="5" rx="2"/>
+            <line x1="2" x2="22" y1="10" y2="10"/>
+            <circle cx="7" cy="15" r="1.5" fill="#f59e0b" stroke="none"/>
+            <path d="M16 14l2 2 3-3" stroke="#34d399" stroke-width="2.5"/>
+        </svg>
+    </div>
+    <div>
+        <h2 style="margin: 0; font-size: 1.45rem; font-weight: 800; color: #f8fafc; letter-spacing: -0.02em;">Nexus Stream</h2>
+        <span style="font-size: 0.8rem; color: #94a3b8; font-weight: 500;">Real-Time Fraud Engine</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 health = fetch_api_health()
 cluster_status = health.get("status", "unknown")
