@@ -1,6 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 title Nexus Stream - Real-Time Financial Fraud Detection Engine
+set "PYTHONPATH=%~dp0"
 
 :: Locate Virtual Environment
 set "PYTHON=.venv\Scripts\python.exe"
