@@ -1,0 +1,17 @@
+jobmanager.rpc.address: flink-jobmanager
+jobmanager.rpc.port: 6123
+jobmanager.memory.process.size: 1600m
+
+taskmanager.memory.process.size: 1728m
+taskmanager.numberOfTaskSlots: 4
+parallelism.default: 2
+
+state.backend: filesystem
+state.checkpoints.dir: file:///tmp/flink-checkpoints
+execution.checkpointing.interval: 5000
+execution.checkpointing.mode: EXACTLY_ONCE
+execution.checkpointing.timeout: 60000
+
+rest.port: 8081
+rest.address: 0.0.0.0
+rest.bind-address: 0.0.0.0

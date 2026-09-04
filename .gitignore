@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Data and Models
+*.duckdb
+*.duckdb.wal
+data/
+*.parquet
+
+# Environment
+.env
+.env.local
+
+# Logs and system
+*.log
+.DS_Store
+Thumbs.db

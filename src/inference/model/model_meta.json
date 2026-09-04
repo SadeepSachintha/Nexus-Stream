@@ -1,0 +1,33 @@
+{
+  "feature_names": [
+    "amount",
+    "tx_count_last_10m",
+    "tx_count_last_1h",
+    "amount_rolling_avg_1h",
+    "amount_deviation_from_avg",
+    "geo_distance_velocity_kmh",
+    "is_night_transaction",
+    "category_risk_index"
+  ],
+  "pr_auc": 1.0,
+  "roc_auc": 1.0,
+  "scale_pos_weight": 99.0,
+  "thresholds": {
+    "legitimate_below": 0.4,
+    "review_required_between": [
+      0.4,
+      0.75
+    ],
+    "fraud_suspected_above": 0.75
+  },
+  "feature_importances": {
+    "amount": 0.808270275592804,
+    "tx_count_last_10m": 0.07176171243190765,
+    "tx_count_last_1h": 0.00047287429333664477,
+    "amount_rolling_avg_1h": 0.10602842271327972,
+    "amount_deviation_from_avg": 0.0008691886905580759,
+    "geo_distance_velocity_kmh": 0.00550676416605711,
+    "is_night_transaction": 0.0,
+    "category_risk_index": 0.007090793456882238
+  }
+}

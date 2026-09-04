@@ -1,0 +1,76 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 1,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Throughput: Transactions Scored per Second",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(nexus_transactions_total[1m]))",
+          "legendFormat": "Total TPS",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "title": "Fraud Classification Breakdown",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (prediction) (rate(nexus_transactions_total[1m]))",
+          "legendFormat": "{{prediction}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "title": "P99 Inference Latency (ms)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(nexus_inference_latency_seconds_bucket[1m])) by (le)) * 1000",
+          "legendFormat": "P99 Latency (ms)",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "title": "Estimated Fraud Rate (%)",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "(sum(rate(nexus_transactions_total{prediction=\"FRAUD_SUSPECTED\"}[5m])) / sum(rate(nexus_transactions_total[5m]))) * 100",
+          "legendFormat": "Fraud Rate %",
+          "refId": "D"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["nexus-stream", "fraud-detection"],
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Nexus Stream: Fraud Pipeline Telemetry",
+  "version": 1
+}

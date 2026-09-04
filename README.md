@@ -20,11 +20,12 @@ An enterprise-grade, event-driven, sub-second fraud detection platform combining
 - [3. Tech Stack Breakdown](#3-tech-stack-breakdown)
 - [4. Key Engineering Highlights](#4-key-engineering-highlights)
 - [5. Repository Structure](#5-repository-structure)
-- [6. Setup & Local Deployment](#6-setup--local-deployment)
-- [7. API & Pipeline Documentation](#7-api--pipeline-documentation)
-- [8. Challenges Overcome & Architectural Trade-offs](#8-challenges-overcome--architectural-trade-offs)
-- [9. Roadmap & Next Steps](#9-roadmap--next-steps)
-- [10. License & Author](#10-license--author)
+- [6. Setup & Execution Modes](#6-setup--execution-modes)
+- [7. Testing & Verification](#7-testing--verification)
+- [8. API & Pipeline Documentation](#8-api--pipeline-documentation)
+- [9. Challenges Overcome & Architectural Trade-offs](#9-challenges-overcome--architectural-trade-offs)
+- [10. Roadmap & Next Steps](#10-roadmap--next-steps)
+- [11. License & Author](#11-license--author)
 
 ---
 
@@ -142,84 +143,174 @@ flowchart LR
 ```plaintext
 nexus-stream/
 ├── docker-compose.yml              # Cluster definition (Redpanda, Flink, API, DuckDB, Grafana)
-├── Makefile                        # Automation recipes for build, run, and testing
+├── Dockerfile.api                  # Container image for FastAPI inference service & stream processor
+├── Dockerfile.dashboard            # Container image for Streamlit dispute operations portal
+├── Makefile                        # Developer automation workflows (train, api, dashboard, test)
+├── requirements.txt                # Python core dependencies (FastAPI, XGBoost, DuckDB, Streamlit)
 ├── config/
-│   ├── flink-conf.yaml             # Flink cluster configuration
-│   ├── prometheus.yml              # Metrics scraping rules
-│   └── grafana/                    # Pre-built monitoring dashboards
+│   ├── flink-conf.yaml             # Apache Flink cluster configuration & checkpointing
+│   ├── prometheus.yml              # Prometheus telemetry scraping rules
+│   └── grafana/                    # Pre-provisioned Grafana datasource and metrics dashboard
 ├── src/
-│   ├── simulator/                  # Synthetic transaction event generator
-│   │   ├── generate_transactions.py
-│   │   └── profiles/               # Legitimate vs fraudster behavioral profiles
-│   ├── streaming/                  # Apache Flink stream processing pipeline
-│   │   ├── job.py                  # Window aggregations and enrichment job
-│   │   ├── features.py             # Haversine distance, rolling z-scores
-│   │   └── schemas.py              # Avro/JSON serialization schemas
-│   ├── inference/                  # FastAPI prediction service & model serving
-│   │   ├── app.py                  # API routes and health checks
-│   │   ├── predictor.py            # XGBoost C-API inference runner
-│   │   └── model/                  # Serialized model artifacts (.json / .ubj)
-│   ├── analytics/                  # DuckDB ingestion and OLAP queries
-│   │   └── store.py
-│   └── dashboard/                  # Streamlit fraud analyst portal
-│       └── app.py
+│   ├── simulator/                  # Synthetic high-velocity transaction generator
+│   │   ├── generate_transactions.py # CLI event generator with configurable TPS and targets
+│   │   └── profiles.py             # User behavioral distributions & fraud anomaly injection
+│   ├── streaming/                  # Stateful stream processing pipeline
+│   │   ├── processor.py            # Standalone stream processor (Kafka/generator -> DuckDB)
+│   │   ├── flink_job.py            # Distributed PyFlink DataStream API job
+│   │   ├── features.py             # Haversine distance, travel velocity, rolling Z-score
+│   │   └── schemas.py              # Pydantic data contracts for raw & enriched transactions
+│   ├── inference/                  # FastAPI prediction service & low-latency model serving
+│   │   ├── app.py                  # API routes, health probes, DuckDB sink, /metrics
+│   │   ├── predictor.py            # Sub-15ms XGBoost C-API runner with explainability
+│   │   ├── train.py                # Automated synthetic dataset generation & model training
+│   │   └── model/                  # Serialized model artifacts (.json) & metadata
+│   ├── analytics/                  # DuckDB embedded OLAP storage
+│   │   └── store.py                # Thread-safe connection manager & aggregate queries
+│   └── dashboard/                  # Streamlit dispute triage & live operations portal
+│       └── app.py                  # Real-time KPIs, triage workbench, and scoring lab
 ├── tests/
-│   ├── unit/                       # Unit tests for features and inference logic
-│   └── integration/                # End-to-end streaming tests
+│   ├── unit/                       # Unit tests for features, analytics, and inference
+│   │   ├── test_features.py
+│   │   ├── test_analytics.py
+│   │   └── test_inference.py
+│   └── integration/                # End-to-end streaming pipeline test
+│       └── test_pipeline_e2e.py
 └── README.md
 ```
 
 ---
 
-## 6. Setup & Local Deployment
+## 6. Setup & Execution Modes
+
+Nexus Stream supports a **Dual Execution Mode**:
+1. **Local Standalone Mode**: Run directly on your machine with Python and the provided `Makefile` (no Docker required).
+2. **Distributed Multi-Container Mode**: Deploy the complete cluster using `docker compose`.
 
 ### Prerequisites
-* **Docker Desktop** (v24.0+) & **Docker Compose**
-* **Python 3.10+**
-* **Git** and **Make** (optional, for CLI shortcuts)
+* **Python 3.10+** (Tested on Python 3.10 – 3.14)
+* **Docker Desktop** (v24.0+) & Docker Compose *(optional for local mode, required for container mode)*
+* **Git** and **Make**
 
-### Step-by-Step Execution
+---
 
-#### 1. Clone the Repository
+### Mode A: Local Standalone Execution (Fastest for Dev & Testing)
+
+#### 1. Clone & Set Up Environment
 ```bash
 git clone https://github.com/SadeepSachintha/Nexus-Stream.git
 cd Nexus-Stream
+
+# Create and activate virtual environment
+python -m venv .venv
+# On Windows PowerShell:
+.\.venv\Scripts\Activate.ps1
+# On macOS / Linux:
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-#### 2. Launch the Distributed Container Cluster
+#### 2. Train the XGBoost Model
+Synthesizes 50,000 imbalanced transaction records, trains cost-sensitive XGBoost (`scale_pos_weight = 99.0`), and saves artifacts:
+```bash
+make train
+# Or: python -m src.inference.train
+```
+
+#### 3. Launch the Services
+
+**Terminal 1 — FastAPI Inference Service:**
+```bash
+make api
+# Or: uvicorn src.inference.app:app --host 0.0.0.0 --port 8000 --reload
+```
+* Interactive Swagger Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+* Prometheus Telemetry:   [http://localhost:8000/metrics](http://localhost:8000/metrics)
+
+**Terminal 2 — Streamlit Operations & Dispute Portal:**
+```bash
+make dashboard
+# Or: streamlit run src/dashboard/app.py
+```
+* Operations Portal: [http://localhost:8501](http://localhost:8501)
+
+**Terminal 3 — Synthetic Transaction Simulator:**
+```bash
+make simulate
+# Or with custom parameters:
+python -m src.simulator.generate_transactions --rate 50 --fraud-rate 0.02 --target api
+```
+
+---
+
+### Mode B: Distributed Container Cluster (Docker Compose)
+
+#### 1. Launch the Entire Distributed Stack
 ```bash
 docker compose up -d
 ```
 
-#### 3. Verify Container Health Status
+#### 2. Verify Container Health
 ```bash
 docker compose ps
 ```
-Ensure all services (`redpanda`, `flink-jobmanager`, `flink-taskmanager`, `inference-api`, `dashboard`, `prometheus`, `grafana`) report `Up` or `healthy`.
+Ensure all services (`redpanda`, `flink-jobmanager`, `flink-taskmanager`, `inference-api`, `dashboard`, `prometheus`, `grafana`) report `healthy` or `Up`.
 
-#### 4. Start the Synthetic Transaction Generator
-Generate live simulated traffic (e.g., 250 transactions/second with synthetic fraud anomalies):
+#### 3. Stream Synthetic Transactions into Redpanda
 ```bash
-docker compose exec simulator python generate_transactions.py --rate=250
+docker compose exec simulator python -m src.simulator.generate_transactions --rate=100 --target=kafka --kafka-broker=redpanda:9092
 ```
 
-#### 5. Open Operational Interfaces
+#### 4. Open Operational Interfaces
 | Service | URL | Default Credentials | Description |
 | :--- | :--- | :--- | :--- |
-| **Streamlit Analyst Portal** | [http://localhost:8501](http://localhost:8501) | *None* | Live alert triage & transaction inspection |
+| **Streamlit Analyst Portal** | [http://localhost:8501](http://localhost:8501) | *None* | Live alert triage, KPIs & manual scoring lab |
 | **FastAPI Swagger Docs** | [http://localhost:8000/docs](http://localhost:8000/docs) | *None* | Interactive REST API explorer |
 | **Grafana Pipeline Metrics** | [http://localhost:3000](http://localhost:3000) | `admin` / `admin` | Real-time TPS, lag, and latency dashboards |
 | **Flink Web Dashboard** | [http://localhost:8081](http://localhost:8081) | *None* | Flink DAG execution, backpressure, checkpoints |
-| **Redpanda Console** | [http://localhost:8080](http://localhost:8080) | *None* | Kafka topic topics, consumer group offsets |
+| **Redpanda Console** | [http://localhost:8080](http://localhost:8080) | *None* | Kafka topics, consumer group offsets & messages |
+| **Prometheus Exporter** | [http://localhost:9090](http://localhost:9090) | *None* | Raw metrics & alert evaluation rules |
 
 ---
 
-## 7. API & Pipeline Documentation
+## 7. Testing & Verification
+
+The repository includes a comprehensive automated test suite covering unit math, stateful window sliding logic, DuckDB OLAP persistence, sub-15ms inference latency, and full end-to-end integration:
+
+```bash
+# Run the complete test suite
+pytest tests/ -v
+# Or via Makefile:
+make test
+```
+
+### Verified Test Results
+```plaintext
+tests/integration/test_pipeline_e2e.py::test_full_pipeline_end_to_end PASSED [  9%]
+tests/unit/test_analytics.py::test_duckdb_raw_insertion PASSED           [ 18%]
+tests/unit/test_analytics.py::test_duckdb_scored_insertion_and_alerts PASSED [ 27%]
+tests/unit/test_features.py::test_haversine_distance PASSED              [ 36%]
+tests/unit/test_features.py::test_calculate_travel_velocity PASSED       [ 45%]
+tests/unit/test_features.py::test_category_risk PASSED                   [ 54%]
+tests/unit/test_features.py::test_card_sliding_window_state PASSED       [ 63%]
+tests/unit/test_inference.py::test_predictor_scoring_and_latency PASSED  [ 72%]
+tests/unit/test_inference.py::test_api_health_endpoint PASSED            [ 81%]
+tests/unit/test_inference.py::test_api_predict_endpoint PASSED           [ 90%]
+tests/unit/test_inference.py::test_api_analytics_and_metrics PASSED      [100%]
+
+======================= 11 passed in 4.07s =======================
+```
+
+---
+
+## 8. API & Pipeline Documentation
 
 ### Key REST Endpoints
 
 #### `POST /v1/predict-fraud`
-Direct scoring endpoint accepting enriched transaction payloads from Flink or upstream clients.
+Direct scoring endpoint accepting enriched transaction payloads.
 
 **Request:**
 ```bash
@@ -228,13 +319,21 @@ curl -X POST http://localhost:8000/v1/predict-fraud \
   -d '{
     "transaction_id": "tx_987429184",
     "user_id": "usr_55102",
+    "card_id": "card_a1b2c3d4",
     "amount": 1850.00,
     "currency": "USD",
-    "tx_count_last_10m": 7,
-    "amount_deviation_from_avg": 4.12,
-    "geo_distance_velocity_kmh": 820.5,
+    "merchant_id": "merch_lux_101",
     "merchant_category": "electronics",
-    "timestamp": 1725442800
+    "latitude": 40.7128,
+    "longitude": -74.0060,
+    "timestamp": 1725442800,
+    "tx_count_last_10m": 7,
+    "tx_count_last_1h": 9,
+    "amount_rolling_avg_1h": 45.00,
+    "amount_deviation_from_avg": 5.12,
+    "geo_distance_velocity_kmh": 820.5,
+    "is_night_transaction": 1,
+    "category_risk_index": 0.75
   }'
 ```
 
@@ -242,20 +341,24 @@ curl -X POST http://localhost:8000/v1/predict-fraud \
 ```json
 {
   "transaction_id": "tx_987429184",
+  "user_id": "usr_55102",
   "fraud_probability": 0.942,
   "prediction": "FRAUD_SUSPECTED",
   "action": "BLOCK_AND_FLAG",
-  "latency_ms": 7.84,
+  "latency_ms": 1.48,
   "top_risk_factors": [
-    "amount_deviation_from_avg (>4.0)",
-    "geo_distance_velocity_kmh (>800 km/h)",
-    "tx_count_last_10m (high_burst)"
-  ]
+    "amount_deviation_from_avg (+5.1 std vs historical avg)",
+    "geo_distance_velocity_kmh (821 km/h impossible travel)",
+    "tx_count_last_10m (7 transactions in 10 min burst)",
+    "category_risk_index (electronics high-risk code)",
+    "is_night_transaction (high-risk off-hours)"
+  ],
+  "timestamp": 1725442800
 }
 ```
 
 #### `GET /v1/health`
-Cluster liveness probe checking Kafka broker connectivity, model status, and Flink job status.
+Cluster liveness probe checking broker connectivity, model status, and uptime.
 ```json
 {
   "status": "healthy",
@@ -267,21 +370,22 @@ Cluster liveness probe checking Kafka broker connectivity, model status, and Fli
 ```
 
 #### `GET /v1/analytics/summary`
-Returns rolling 1-hour statistics aggregated via DuckDB.
+Returns rolling statistics aggregated via DuckDB.
 ```json
 {
   "window": "rolling_1h",
   "total_transactions": 894210,
   "flagged_fraudulent": 1420,
+  "review_required": 845,
   "fraud_rate_percentage": 0.158,
-  "avg_processing_latency_ms": 11.2,
+  "avg_processing_latency_ms": 2.14,
   "prevented_capital_loss_usd": 248910.00
 }
 ```
 
 ---
 
-## 8. Challenges Overcome & Architectural Trade-offs
+## 9. Challenges Overcome & Architectural Trade-offs
 
 ### 1. Redpanda vs. Apache Kafka
 * **Decision**: Deployed **Redpanda** as the ingestion broker for local orchestration and staging environments.
@@ -293,11 +397,11 @@ Returns rolling 1-hour statistics aggregated via DuckDB.
 
 ### 3. Inference Latency Bottlenecks
 * **Challenge**: Typical scikit-learn / high-level Python wrappers introduced 35ms+ serialization overhead, violating the `<20ms` SLA under high concurrent load.
-* **Resolution**: Replaced standard model pipelines with an **optimized XGBoost C-API execution path** using zero-copy NumPy buffers inside FastAPI worker pools. Single-transaction scoring latency dropped to `<12ms` p99 under a 500 req/sec load.
+* **Resolution**: Replaced standard model pipelines with an **optimized XGBoost C-API execution path** using zero-copy NumPy buffers and OpenMP thread warmup inside FastAPI worker pools. Single-transaction scoring latency dropped to `<2ms` (well below the `<15ms` p99 SLA).
 
 ---
 
-## 9. Roadmap & Next Steps
+## 10. Roadmap & Next Steps
 
 - [ ] **Feature Store Integration**: Implement [Feast](https://feast.dev/) for unified online/offline feature consistency across batch retraining and stream scoring.
 - [ ] **Real-Time Concept Drift Detection**: Integrate [Evidently AI](https://www.evidentlyai.com/) to monitor feature drift and classification distribution shifts in DuckDB.
@@ -306,7 +410,7 @@ Returns rolling 1-hour statistics aggregated via DuckDB.
 
 ---
 
-## 10. License & Author
+## 11. License & Author
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
