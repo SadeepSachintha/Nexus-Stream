@@ -1,0 +1,96 @@
+name: Nexus Stream CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  lint-and-validate:
+    name: Code Hygiene & Syntax Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Python Syntax & Bytecode Compilation
+        run: |
+          python -m compileall -q src tests
+
+  test-and-benchmark:
+    name: Automated Tests & Latency SLA (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: lint-and-validate
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Synthesize Training Data & Train XGBoost Model
+        run: |
+          python -m src.inference.train
+
+      - name: Execute Full Pytest Automated Suite (26 Tests)
+        run: |
+          pytest tests/ -v --durations=10
+
+      - name: Verify Concurrency Benchmark & Sub-15ms Latency SLA
+        run: |
+          python -m tests.load.benchmark_cli --requests 100 --concurrency 10 --in-process --endpoint /v1/predict-fraud --sla-ms 35
+
+  docker-build-verification:
+    name: Container Build & Compose Validation
+    runs-on: ubuntu-latest
+    needs: test-and-benchmark
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate Docker Compose Configuration
+        run: |
+          docker compose config
+
+      - name: Build FastAPI Inference API Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.api
+          push: false
+          tags: nexus-stream-api:test
+
+      - name: Build Streamlit Dashboard Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.dashboard
+          push: false
+          tags: nexus-stream-dashboard:test

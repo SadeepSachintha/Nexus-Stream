@@ -3,6 +3,7 @@
 An enterprise-grade, event-driven, sub-second fraud detection platform combining stateful stream processing with machine learning inference at scale.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![CI Pipeline](https://github.com/SadeepSachintha/Nexus-Stream/actions/workflows/ci.yml/badge.svg)](https://github.com/SadeepSachintha/Nexus-Stream/actions/workflows/ci.yml)
 [![Apache Flink](https://img.shields.io/badge/Apache_Flink-1.18-E6526F.svg?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
 [![Redpanda / Kafka](https://img.shields.io/badge/Redpanda-Kafka_Compatible-red.svg?logo=redpanda&logoColor=white)](https://redpanda.com/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -397,7 +398,24 @@ make load-test
 make load-ui
 # Open browser at http://localhost:8089
 ```
-```
+
+### 7.3 Automated CI/CD Pipeline & SLA Gateways
+
+Nexus Stream features production-grade GitHub Actions workflows (`.github/workflows/ci.yml` and `.github/workflows/cd-publish.yml`) ensuring code quality, test reliability, performance SLA compliance, and container delivery:
+
+1. **Lint & Bytecode Validation (`lint-and-validate`)**:
+   - Python 3.11 environment executes automated bytecode compilation (`python -m compileall -q src tests`) to detect syntax regressions and import anomalies before downstream runs.
+2. **Multi-Version Testing & SLA Benchmark Gateways (`test-and-benchmark`)**:
+   - Executes across a matrix of **Python 3.11** and **Python 3.12**.
+   - Leverages `actions/cache` for pip wheels to accelerate runner execution.
+   - Retrains the production XGBoost classifier dynamically (`train_model.py`).
+   - Runs the comprehensive test suite (`pytest -p no:locust -v`), validating all 26 unit, integration, and load smoke tests.
+   - **SLA Benchmark Enforcement**: Fires 500 concurrent in-process scoring requests via `tests.load.benchmark_cli` with a strict assertion: **P99 client latency must remain $< 15\text{ms}$**, failing the pipeline if any performance regression occurs.
+3. **Docker Compose & Container Build Verification (`docker-build-verification`)**:
+   - Validates `docker-compose.yml` specification syntax via `docker compose config`.
+   - Executes multi-stage builds of `Dockerfile.api` and `Dockerfile.dashboard` via `docker/build-push-action`.
+4. **Automated Container Publishing (`cd-publish.yml`)**:
+   - On release tags (`v*.*.*`), automatically builds, tags, and pushes production images to GitHub Container Registry (GHCR: `ghcr.io/sadeepsachintha/nexus-stream-api` and `nexus-stream-dashboard`).
 
 ---
 
@@ -527,6 +545,7 @@ Calculates real-time statistical feature drift (PSI, Two-Sample KS-test, and Was
 - [x] **Dead-Letter Queue (DLQ) & Poison Pill Isolation**: Automated fault-tolerant diversion of corrupt/malformed events with diagnostic logging and 1-click re-scoring hooks.
 - [x] **Real-Time Data & Concept Drift Monitoring**: Sub-second statistical drift radar evaluating PSI, Kolmogorov-Smirnov test, and Wasserstein distance with live dashboard overlays.
 - [x] **High-Throughput Load & Chaos Testing Suite**: Automated Locust & async concurrency benchmark CLI verifying sub-15ms p99 SLA under high request volume.
+- [x] **GitHub Actions CI/CD Pipeline**: Multi-version Python test matrix (3.11, 3.12), automated SLA benchmark guardrails, Docker image build verification, and automated GHCR publishing.
 - [ ] **Feature Store Integration**: Implement [Feast](https://feast.dev/) for unified online/offline feature consistency across batch retraining and stream scoring.
 - [ ] **Cloud Kubernetes Deployment**: Package services into production Helm charts for AWS EKS / GCP GKE with Karpenter autoscaling.
 
