@@ -39,6 +39,15 @@ processor:
 test:
 	$(PYTEST) tests/ -v
 
+benchmark:
+	$(PYTHON) -m tests.load.benchmark_cli --requests 500 --concurrency 25
+
+load-test:
+	$(PYTHON) -m locust -f tests/load/locustfile.py --headless -u 30 -r 10 --run-time 20s --host http://localhost:8000
+
+load-ui:
+	$(PYTHON) -m locust -f tests/load/locustfile.py --host http://localhost:8000 --web-port 8089
+
 docker-up:
 	docker compose up -d
 

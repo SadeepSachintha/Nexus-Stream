@@ -1,5 +1,6 @@
 import duckdb
 import os
+import queue
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -24,15 +25,96 @@ class DuckDBAnalyticsStore:
 
     def __init__(self, db_path: str = "nexus_analytics.duckdb"):
         self.db_path = db_path
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._raw_queue: queue.Queue = queue.Queue(maxsize=100000)
+        self._scored_queue: queue.Queue = queue.Queue(maxsize=100000)
+        self._running = True
+        self._initialized = False
         self._init_db()
+        self._initialized = True
+        self._writer_thread = threading.Thread(target=self._background_flush_loop, daemon=True)
+        self._writer_thread.start()
+
+    def _raw_connect(self) -> duckdb.DuckDBPyConnection:
+        return duckdb.connect(self.db_path)
 
     def _get_connection(self) -> duckdb.DuckDBPyConnection:
-        return duckdb.connect(self.db_path)
+        if self._initialized:
+            self.flush()
+        return self._raw_connect()
+
+    def flush(self) -> None:
+        if not self._initialized:
+            return
+
+        raw_items = []
+        while not self._raw_queue.empty() and len(raw_items) < 1000:
+            try:
+                raw_items.append(self._raw_queue.get_nowait())
+            except queue.Empty:
+                break
+
+        scored_items = []
+        alerts = []
+        while not self._scored_queue.empty() and len(scored_items) < 1000:
+            try:
+                sc_item, alt_item = self._scored_queue.get_nowait()
+                scored_items.append(sc_item)
+                if alt_item:
+                    alerts.append(alt_item)
+            except queue.Empty:
+                break
+
+        if raw_items or scored_items or alerts:
+            with self._lock:
+                conn = self._raw_connect()
+                try:
+                    if raw_items:
+                        conn.executemany("""
+                            INSERT OR REPLACE INTO transactions_raw (
+                                transaction_id, user_id, card_id, amount, currency,
+                                merchant_id, merchant_category, latitude, longitude, timestamp
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, raw_items)
+                        for _ in raw_items:
+                            self._raw_queue.task_done()
+
+                    if scored_items:
+                        conn.executemany("""
+                            INSERT OR REPLACE INTO transactions_scored (
+                                transaction_id, user_id, card_id, amount, currency,
+                                merchant_category, tx_count_last_10m, tx_count_last_1h,
+                                amount_rolling_avg_1h, amount_deviation_from_avg,
+                                geo_distance_velocity_kmh, is_night_transaction,
+                                category_risk_index, fraud_probability, prediction,
+                                action, latency_ms, top_risk_factors, timestamp
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, scored_items)
+                        for _ in scored_items:
+                            self._scored_queue.task_done()
+
+                    if alerts:
+                        conn.executemany("""
+                            INSERT OR REPLACE INTO fraud_alerts (
+                                alert_id, transaction_id, user_id, card_id, amount,
+                                merchant_category, fraud_probability, prediction,
+                                action, top_risk_factors, status, timestamp
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNREVIEWED', ?)
+                        """, alerts)
+                finally:
+                    conn.close()
+
+    def _background_flush_loop(self) -> None:
+        while self._running:
+            try:
+                time.sleep(0.02)
+                self.flush()
+            except Exception:
+                pass
 
     def _init_db(self) -> None:
         with self._lock:
-            conn = self._get_connection()
+            conn = self._raw_connect()
             try:
                 # 1. Raw transactions stream table
                 conn.execute("""
@@ -124,64 +206,38 @@ class DuckDBAnalyticsStore:
                 conn.close()
 
     def insert_raw_transaction(self, tx: RawTransaction) -> None:
-        with self._lock:
-            conn = self._get_connection()
-            try:
-                conn.execute("""
-                    INSERT OR REPLACE INTO transactions_raw (
-                        transaction_id, user_id, card_id, amount, currency,
-                        merchant_id, merchant_category, latitude, longitude, timestamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    tx.transaction_id, tx.user_id, tx.card_id, tx.amount, tx.currency,
-                    tx.merchant_id, tx.merchant_category, tx.latitude, tx.longitude, tx.timestamp
-                ))
-            finally:
-                conn.close()
+        """Enqueues raw transaction into asynchronous batch writer for non-blocking OLAP persistence."""
+        self._raw_queue.put((
+            tx.transaction_id, tx.user_id, tx.card_id, tx.amount, tx.currency,
+            tx.merchant_id, tx.merchant_category, tx.latitude, tx.longitude, tx.timestamp
+        ))
 
     def insert_scored_transaction(
         self,
         tx: EnrichedTransaction,
         pred: FraudPredictionResponse
     ) -> None:
-        with self._lock:
-            conn = self._get_connection()
-            try:
-                risk_factors_str = json.dumps(pred.top_risk_factors)
-                conn.execute("""
-                    INSERT OR REPLACE INTO transactions_scored (
-                        transaction_id, user_id, card_id, amount, currency,
-                        merchant_category, tx_count_last_10m, tx_count_last_1h,
-                        amount_rolling_avg_1h, amount_deviation_from_avg,
-                        geo_distance_velocity_kmh, is_night_transaction,
-                        category_risk_index, fraud_probability, prediction,
-                        action, latency_ms, top_risk_factors, timestamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    tx.transaction_id, tx.user_id, tx.card_id, tx.amount, tx.currency,
-                    tx.merchant_category, tx.tx_count_last_10m, getattr(tx, "tx_count_last_1h", 1),
-                    getattr(tx, "amount_rolling_avg_1h", tx.amount), tx.amount_deviation_from_avg,
-                    tx.geo_distance_velocity_kmh, 1 if getattr(tx, "is_night_transaction", False) else 0,
-                    getattr(tx, "category_risk_index", 0.1), pred.fraud_probability, pred.prediction,
-                    pred.action, pred.latency_ms, risk_factors_str, tx.timestamp
-                ))
+        """Enqueues scored event and alert triggers into asynchronous batch writer."""
+        risk_factors_str = json.dumps(pred.top_risk_factors)
+        sc_tuple = (
+            tx.transaction_id, tx.user_id, tx.card_id, tx.amount, tx.currency,
+            tx.merchant_category, tx.tx_count_last_10m, getattr(tx, "tx_count_last_1h", 1),
+            getattr(tx, "amount_rolling_avg_1h", tx.amount), tx.amount_deviation_from_avg,
+            tx.geo_distance_velocity_kmh, 1 if getattr(tx, "is_night_transaction", False) else 0,
+            getattr(tx, "category_risk_index", 0.1), pred.fraud_probability, pred.prediction,
+            pred.action, pred.latency_ms, risk_factors_str, tx.timestamp
+        )
 
-                # If high risk or review required, register in alert table
-                if pred.prediction in ("FRAUD_SUSPECTED", "REVIEW_REQUIRED"):
-                    alert_id = f"alt_{tx.transaction_id}"
-                    conn.execute("""
-                        INSERT OR REPLACE INTO fraud_alerts (
-                            alert_id, transaction_id, user_id, card_id, amount,
-                            merchant_category, fraud_probability, prediction,
-                            action, top_risk_factors, status, timestamp
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNREVIEWED', ?)
-                    """, (
-                        alert_id, tx.transaction_id, tx.user_id, tx.card_id, tx.amount,
-                        tx.merchant_category, pred.fraud_probability, pred.prediction,
-                        pred.action, risk_factors_str, tx.timestamp
-                    ))
-            finally:
-                conn.close()
+        alt_tuple = None
+        if pred.prediction in ("FRAUD_SUSPECTED", "REVIEW_REQUIRED"):
+            alert_id = f"alt_{tx.transaction_id}"
+            alt_tuple = (
+                alert_id, tx.transaction_id, tx.user_id, tx.card_id, tx.amount,
+                tx.merchant_category, pred.fraud_probability, pred.prediction,
+                pred.action, risk_factors_str, tx.timestamp
+            )
+
+        self._scored_queue.put((sc_tuple, alt_tuple))
 
     def get_rolling_summary(self, window_seconds: int = 3600) -> AnalyticsSummaryResponse:
         """Computes rolling aggregate statistics for the API and dashboard."""

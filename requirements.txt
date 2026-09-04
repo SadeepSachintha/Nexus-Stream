@@ -16,3 +16,5 @@ pytest-asyncio>=0.23.0
 prometheus-client>=0.20.0
 confluent-kafka>=2.3.0
 networkx>=3.0
+scipy>=1.11.0
+locust>=2.24.0
