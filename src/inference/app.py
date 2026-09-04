@@ -14,13 +14,16 @@ from src.streaming.schemas import (
     AnalyticsSummaryResponse,
     DeadLetterEvent,
     DLQSummaryResponse,
+    DriftReportResponse,
 )
 import json
 import uuid
+import numpy as np
 from src.streaming.features import StreamFeatureStateManager
 from src.inference.predictor import FraudPredictor
 from src.inference.train import train_model
 from src.analytics.store import DuckDBAnalyticsStore
+from src.analytics.drift import StatisticalDriftEngine
 
 # Prometheus Metrics
 TX_COUNTER = Counter(
@@ -38,12 +41,13 @@ INFERENCE_LATENCY = Histogram(
 predictor: Optional[FraudPredictor] = None
 store: Optional[DuckDBAnalyticsStore] = None
 feature_manager: Optional[StreamFeatureStateManager] = None
+drift_engine: Optional[StatisticalDriftEngine] = None
 START_TIME = time.time()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global predictor, store, feature_manager
+    global predictor, store, feature_manager, drift_engine
     print("[*] Initializing Nexus Stream API...")
     
     # 1. Initialize Analytics Store
@@ -53,7 +57,10 @@ async def lifespan(app: FastAPI):
     # 2. Initialize Feature State Manager
     feature_manager = StreamFeatureStateManager()
 
-    # 3. Initialize Predictor & Auto-train if model missing
+    # 3. Initialize Statistical Drift Monitoring Engine
+    drift_engine = StatisticalDriftEngine()
+
+    # 4. Initialize Predictor & Auto-train if model missing
     predictor = FraudPredictor()
     if not predictor.is_ready():
         print("[!] No trained XGBoost model found. Running automated initial training...")
@@ -283,4 +290,88 @@ def inject_test_poison_pill(poison_type: str = Query(default="malformed_json", p
     )
     store.insert_dlq_event(event)
     return event
+
+
+# --- Data & Concept Drift Monitoring Endpoints ---
+
+@app.get("/v1/analytics/drift", response_model=DriftReportResponse, tags=["Drift Monitoring"])
+def get_drift_report(limit: int = Query(default=200, ge=10, le=2000)) -> DriftReportResponse:
+    """
+    Computes statistical feature drift between reference baseline and production events.
+    Calculates Population Stability Index (PSI), Kolmogorov-Smirnov test, and Wasserstein distance.
+    """
+    if drift_engine is None or store is None:
+        raise HTTPException(status_code=503, detail="Drift engine or store not initialized")
+    recent_records = store.get_recent_transactions(limit=limit)
+    return drift_engine.compute_drift_report(recent_records)
+
+
+@app.get("/v1/analytics/drift/distribution", tags=["Drift Monitoring"])
+def get_drift_distribution(
+    feature_name: str = Query(default="amount"),
+    limit: int = Query(default=200, ge=10, le=2000)
+) -> Dict[str, Any]:
+    """
+    Returns reference vs production sampled distribution points for visualization.
+    """
+    if drift_engine is None or store is None:
+        raise HTTPException(status_code=503, detail="Drift engine or store not initialized")
+    recent_records = store.get_recent_transactions(limit=limit)
+    return drift_engine.get_comparison_distributions(feature_name, recent_records)
+
+
+@app.post("/v1/analytics/drift/simulate-shift", tags=["Drift Monitoring"])
+def simulate_distribution_shift(
+    shift_type: str = Query(default="amount_surge", pattern="^(amount_surge|velocity_spike|crypto_boom)$"),
+    count: int = Query(default=50, ge=10, le=200)
+) -> Dict[str, Any]:
+    """
+    Simulates real-world production distribution shift to demonstrate automated drift alerting.
+    """
+    if feature_manager is None or predictor is None or store is None:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    injected = []
+    now = time.time()
+    for i in range(count):
+        tx_id = f"tx_shift_{uuid.uuid4().hex[:8]}"
+        card_id = f"card_shift_{i % 5}"
+        user_id = f"usr_shift_{i % 5}"
+
+        if shift_type == "amount_surge":
+            # Shift amounts significantly higher than training mean ($50 -> $3,000-$9,000)
+            amount = float(np.random.uniform(3000.0, 9500.0))
+            category = "luxury_goods"
+            lat, lon = 40.7128, -74.0060
+        elif shift_type == "velocity_spike":
+            # Rapid high-frequency international cross-geo purchases
+            amount = float(np.random.uniform(150.0, 750.0))
+            category = "electronics"
+            lat = 35.6762 if (i % 2 == 0) else 40.7128
+            lon = 139.6503 if (i % 2 == 0) else -74.0060
+        else:  # crypto_boom
+            amount = float(np.random.uniform(1200.0, 4500.0))
+            category = "crypto_exchange"
+            lat, lon = 51.5074, -0.1278
+
+        raw_tx = RawTransaction(
+            transaction_id=tx_id,
+            card_id=card_id,
+            user_id=user_id,
+            amount=round(amount, 2),
+            currency="USD",
+            merchant_id=f"m_{shift_type}_{i}",
+            merchant_category=category,
+            latitude=lat,
+            longitude=lon,
+            timestamp=now + (i * 0.1),
+        )
+        pred = ingest_and_score_raw(raw_tx)
+        injected.append({"transaction_id": tx_id, "amount": round(amount, 2), "prediction": pred.prediction})
+
+    return {
+        "message": f"Successfully injected {count} shifted transactions under scenario '{shift_type}'",
+        "injected_count": count,
+        "shift_type": shift_type,
+    }
 

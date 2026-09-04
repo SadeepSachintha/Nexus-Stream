@@ -145,6 +145,14 @@ flowchart LR
 * Automatically diverts poisoned messages to `transactions.dlq` and DuckDB with diagnostic error traces while consumer offsets advance continuously.
 * Features a full operational replay workflow (`POST /v1/dlq/{dlq_id}/replay`) to re-score corrected payloads without audit data loss.
 
+### 6. Real-Time Data & Concept Drift Monitoring (Statistical Drift Radar)
+* **Statistical Divergence Battery**: Continuously monitors live production feature distributions against offline training baselines via:
+  * **Population Stability Index (PSI)**: Quantile-binned stability tracking (`< 0.10` Stable, `0.10-0.20` Moderate Shift, `≥ 0.20` Critical Drift).
+  * **Two-Sample Kolmogorov-Smirnov (KS) Test**: Non-parametric evaluation with exact asymptotic p-values detecting subtle shifts in feature density.
+  * **Wasserstein Distance**: Earth Mover's Distance quantifying absolute distribution displacement.
+* **Automated Alerting**: Flags dataset drift when $\ge 2$ features or $>30\%$ of monitored dimensions diverge significantly.
+* **Interactive Operations Tab**: Built-in Streamlit Drift Radar with stability scorecards, interactive Plotly density overlays, and a 1-click Macroeconomic / Attack Shift Injection Studio.
+
 ---
 
 ## 5. Repository Structure
@@ -300,26 +308,31 @@ make test
 
 ### Verified Test Results
 ```plaintext
-tests/integration/test_pipeline_e2e.py::test_full_pipeline_end_to_end PASSED [  5%]
-tests/unit/test_analytics.py::test_duckdb_raw_insertion PASSED           [ 11%]
-tests/unit/test_analytics.py::test_duckdb_scored_insertion_and_alerts PASSED [ 16%]
-tests/unit/test_dlq.py::test_dlq_duckdb_storage_and_summary PASSED       [ 22%]
-tests/unit/test_dlq.py::test_stream_processor_poison_pill_isolation PASSED [ 27%]
-tests/unit/test_dlq.py::test_api_dlq_lifecycle_and_replay PASSED         [ 33%]
-tests/unit/test_features.py::test_haversine_distance PASSED              [ 38%]
-tests/unit/test_features.py::test_calculate_travel_velocity PASSED       [ 44%]
-tests/unit/test_features.py::test_category_risk PASSED                   [ 50%]
-tests/unit/test_features.py::test_card_sliding_window_state PASSED       [ 55%]
-tests/unit/test_graph_ring.py::test_bipartite_graph_ring_detection PASSED [ 61%]
-tests/unit/test_graph_ring.py::test_graph_ttl_pruning PASSED             [ 66%]
-tests/unit/test_graph_ring.py::test_feature_manager_graph_enrichment PASSED [ 72%]
-tests/unit/test_graph_ring.py::test_predictor_fraud_ring_policy_override PASSED [ 77%]
-tests/unit/test_inference.py::test_predictor_scoring_and_latency PASSED  [ 83%]
-tests/unit/test_inference.py::test_api_health_endpoint PASSED            [ 88%]
-tests/unit/test_inference.py::test_api_predict_endpoint PASSED           [ 94%]
+tests/integration/test_pipeline_e2e.py::test_full_pipeline_end_to_end PASSED [  4%]
+tests/unit/test_analytics.py::test_duckdb_raw_insertion PASSED           [  8%]
+tests/unit/test_analytics.py::test_duckdb_scored_insertion_and_alerts PASSED [ 13%]
+tests/unit/test_dlq.py::test_dlq_duckdb_storage_and_summary PASSED       [ 17%]
+tests/unit/test_dlq.py::test_stream_processor_poison_pill_isolation PASSED [ 21%]
+tests/unit/test_dlq.py::test_api_dlq_lifecycle_and_replay PASSED         [ 26%]
+tests/unit/test_drift.py::test_psi_identical_distributions PASSED        [ 30%]
+tests/unit/test_drift.py::test_psi_divergent_distributions PASSED        [ 34%]
+tests/unit/test_drift.py::test_ks_and_wasserstein_metrics PASSED         [ 39%]
+tests/unit/test_drift.py::test_feature_analysis_status PASSED            [ 43%]
+tests/unit/test_drift.py::test_compute_drift_report_and_endpoints PASSED [ 47%]
+tests/unit/test_features.py::test_haversine_distance PASSED              [ 52%]
+tests/unit/test_features.py::test_calculate_travel_velocity PASSED       [ 56%]
+tests/unit/test_features.py::test_category_risk PASSED                   [ 60%]
+tests/unit/test_features.py::test_card_sliding_window_state PASSED       [ 65%]
+tests/unit/test_graph_ring.py::test_bipartite_graph_ring_detection PASSED [ 69%]
+tests/unit/test_graph_ring.py::test_graph_ttl_pruning PASSED             [ 73%]
+tests/unit/test_graph_ring.py::test_feature_manager_graph_enrichment PASSED [ 78%]
+tests/unit/test_graph_ring.py::test_predictor_fraud_ring_policy_override PASSED [ 82%]
+tests/unit/test_inference.py::test_predictor_scoring_and_latency PASSED  [ 86%]
+tests/unit/test_inference.py::test_api_health_endpoint PASSED            [ 91%]
+tests/unit/test_inference.py::test_api_predict_endpoint PASSED           [ 95%]
 tests/unit/test_inference.py::test_api_analytics_and_metrics PASSED      [100%]
 
-======================= 18 passed in 5.70s =======================
+======================= 23 passed in 9.21s =======================
 ```
 
 ---
@@ -402,6 +415,30 @@ Returns rolling statistics aggregated via DuckDB.
 }
 ```
 
+#### `GET /v1/analytics/drift`
+Calculates real-time statistical feature drift (PSI, Two-Sample KS-test, and Wasserstein distance) across all production dimensions:
+```json
+{
+  "dataset_drift_detected": false,
+  "drifted_feature_count": 0,
+  "total_features": 8,
+  "drift_share": 0.0,
+  "features": {
+    "amount": {
+      "feature_name": "amount",
+      "psi_score": 0.0215,
+      "ks_statistic": 0.0450,
+      "ks_p_value": 0.82410,
+      "wasserstein_distance": 2.4102,
+      "drift_detected": false,
+      "status": "STABLE"
+    }
+  },
+  "sample_size": 200,
+  "timestamp": 1725443200
+}
+```
+
 ---
 
 ## 9. Challenges Overcome & Architectural Trade-offs
@@ -423,8 +460,10 @@ Returns rolling statistics aggregated via DuckDB.
 ## 10. Roadmap & Next Steps
 
 - [x] **Graph-Based Fraud Rings**: In-memory bipartite entity network graph (`Cards` $\leftrightarrow$ `Devices`) with 24h sliding TTL and interactive Streamlit explorer.
+- [x] **Dead-Letter Queue (DLQ) & Poison Pill Isolation**: Automated fault-tolerant diversion of corrupt/malformed events with diagnostic logging and 1-click re-scoring hooks.
+- [x] **Real-Time Data & Concept Drift Monitoring**: Sub-second statistical drift radar evaluating PSI, Kolmogorov-Smirnov test, and Wasserstein distance with live dashboard overlays.
+- [ ] **High-Throughput Load & Chaos Testing Suite**: Automated Locust & k6 stress simulation benchmarking 10,000+ tx/sec under variable consumer lag.
 - [ ] **Feature Store Integration**: Implement [Feast](https://feast.dev/) for unified online/offline feature consistency across batch retraining and stream scoring.
-- [ ] **Real-Time Concept Drift Detection**: Integrate [Evidently AI](https://www.evidentlyai.com/) to monitor feature drift and classification distribution shifts in DuckDB.
 - [ ] **Cloud Kubernetes Deployment**: Package services into production Helm charts for AWS EKS / GCP GKE with Karpenter autoscaling.
 
 ---

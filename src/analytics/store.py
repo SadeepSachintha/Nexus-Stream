@@ -61,8 +61,12 @@ class DuckDBAnalyticsStore:
                         currency VARCHAR,
                         merchant_category VARCHAR,
                         tx_count_last_10m INTEGER,
+                        tx_count_last_1h INTEGER DEFAULT 1,
+                        amount_rolling_avg_1h DOUBLE DEFAULT 0.0,
                         amount_deviation_from_avg DOUBLE,
                         geo_distance_velocity_kmh DOUBLE,
+                        is_night_transaction INTEGER DEFAULT 0,
+                        category_risk_index DOUBLE DEFAULT 0.1,
                         fraud_probability DOUBLE,
                         prediction VARCHAR,
                         action VARCHAR,
@@ -72,6 +76,16 @@ class DuckDBAnalyticsStore:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+                for col_name, col_type in [
+                    ("tx_count_last_1h", "INTEGER DEFAULT 1"),
+                    ("amount_rolling_avg_1h", "DOUBLE DEFAULT 0.0"),
+                    ("is_night_transaction", "INTEGER DEFAULT 0"),
+                    ("category_risk_index", "DOUBLE DEFAULT 0.1"),
+                ]:
+                    try:
+                        conn.execute(f"ALTER TABLE transactions_scored ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                    except Exception:
+                        pass
 
                 # 3. Dedicated fraud alert & dispute triage table
                 conn.execute("""
@@ -137,14 +151,18 @@ class DuckDBAnalyticsStore:
                 conn.execute("""
                     INSERT OR REPLACE INTO transactions_scored (
                         transaction_id, user_id, card_id, amount, currency,
-                        merchant_category, tx_count_last_10m, amount_deviation_from_avg,
-                        geo_distance_velocity_kmh, fraud_probability, prediction,
+                        merchant_category, tx_count_last_10m, tx_count_last_1h,
+                        amount_rolling_avg_1h, amount_deviation_from_avg,
+                        geo_distance_velocity_kmh, is_night_transaction,
+                        category_risk_index, fraud_probability, prediction,
                         action, latency_ms, top_risk_factors, timestamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     tx.transaction_id, tx.user_id, tx.card_id, tx.amount, tx.currency,
-                    tx.merchant_category, tx.tx_count_last_10m, tx.amount_deviation_from_avg,
-                    tx.geo_distance_velocity_kmh, pred.fraud_probability, pred.prediction,
+                    tx.merchant_category, tx.tx_count_last_10m, getattr(tx, "tx_count_last_1h", 1),
+                    getattr(tx, "amount_rolling_avg_1h", tx.amount), tx.amount_deviation_from_avg,
+                    tx.geo_distance_velocity_kmh, 1 if getattr(tx, "is_night_transaction", False) else 0,
+                    getattr(tx, "category_risk_index", 0.1), pred.fraud_probability, pred.prediction,
                     pred.action, pred.latency_ms, risk_factors_str, tx.timestamp
                 ))
 
@@ -222,11 +240,7 @@ class DuckDBAnalyticsStore:
             conn = self._get_connection()
             try:
                 df = conn.execute("""
-                    SELECT 
-                        transaction_id, user_id, card_id, amount, currency,
-                        merchant_category, tx_count_last_10m, amount_deviation_from_avg,
-                        geo_distance_velocity_kmh, fraud_probability, prediction,
-                        action, latency_ms, top_risk_factors, timestamp
+                    SELECT *
                     FROM transactions_scored
                     ORDER BY timestamp DESC
                     LIMIT ?

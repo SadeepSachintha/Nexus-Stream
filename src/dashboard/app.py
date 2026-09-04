@@ -2,6 +2,8 @@ import json
 import os
 import sys
 import time
+import uuid
+import numpy as np
 import requests
 import pandas as pd
 import plotly.express as px
@@ -73,15 +75,17 @@ from src.analytics.store import DuckDBAnalyticsStore
 from src.inference.predictor import FraudPredictor
 from src.streaming.features import StreamFeatureStateManager
 from src.streaming.schemas import RawTransaction, EnrichedTransaction
+from src.analytics.drift import StatisticalDriftEngine
 
 @st.cache_resource
 def get_local_resources():
     store = DuckDBAnalyticsStore(db_path=DB_PATH)
     predictor = FraudPredictor()
     feature_mgr = StreamFeatureStateManager()
-    return store, predictor, feature_mgr
+    drift_engine = StatisticalDriftEngine()
+    return store, predictor, feature_mgr, drift_engine
 
-store, local_predictor, feature_mgr = get_local_resources()
+store, local_predictor, feature_mgr, local_drift_engine = get_local_resources()
 
 
 def fetch_api_health():
@@ -104,6 +108,29 @@ def fetch_summary():
     # Fallback to local DuckDB query
     summary = store.get_rolling_summary(window_seconds=3600)
     return summary.model_dump()
+
+
+def fetch_drift_report(limit: int = 200):
+    try:
+        r = requests.get(f"{API_BASE_URL}/v1/analytics/drift?limit={limit}", timeout=1.5)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    records = store.get_recent_transactions(limit=limit)
+    report = local_drift_engine.compute_drift_report(records)
+    return report.model_dump()
+
+
+def fetch_drift_distribution(feature_name: str, limit: int = 200):
+    try:
+        r = requests.get(f"{API_BASE_URL}/v1/analytics/drift/distribution?feature_name={feature_name}&limit={limit}", timeout=1.5)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    records = store.get_recent_transactions(limit=limit)
+    return local_drift_engine.get_comparison_distributions(feature_name, records)
 
 
 # --- Sidebar Controls ---
@@ -207,12 +234,13 @@ with c5:
 st.write("")
 
 # Navigation Tabs
-tab_alerts, tab_analytics, tab_simulator, tab_graph, tab_dlq, tab_model = st.tabs([
+tab_alerts, tab_analytics, tab_simulator, tab_graph, tab_dlq, tab_drift, tab_model = st.tabs([
     "🚨 Live Alerts & Dispute Triage",
     "📊 Real-Time Analytics & Risk Matrix",
     "⚡ Instant Transaction Scoring Lab",
     "🕸️ Fraud Ring Network Explorer",
     "⚠️ Dead-Letter Queue (DLQ)",
+    "📡 Drift Radar & Model Health",
     "🎯 Model Explainability & Thresholds"
 ])
 
@@ -639,7 +667,180 @@ with tab_dlq:
             st.success("Injected negative amount poison pill!")
             st.rerun()
 
-# --- TAB 6: Model Explainability & Thresholds ---
+# --- TAB 6: Drift Radar & Model Health ---
+with tab_drift:
+    st.subheader("Statistical Data & Concept Drift Radar")
+    st.markdown("Sub-second divergence tracking between training reference baseline distributions and live production streaming features.")
+
+    drift_report = fetch_drift_report(limit=300)
+
+    # 1. High-level status alert
+    if drift_report.get("dataset_drift_detected", False):
+        st.error(f"🚨 **DATASET DRIFT ALERT**: {drift_report.get('drifted_feature_count', 0)} / {drift_report.get('total_features', 8)} features ({drift_report.get('drift_share', 0.0)}%) exhibit statistically significant divergence from baseline! Immediate model retraining or traffic audit recommended.")
+    else:
+        st.success(f"🟢 **STREAM DISTRIBUTIONS STABLE**: 0 critical feature drifts detected across {drift_report.get('sample_size', 0)} monitored production transactions. Production aligns with baseline.")
+
+    # 2. Executive KPIs
+    d_c1, d_c2, d_c3, d_c4 = st.columns(4)
+    d_c1.metric("Drifted Features", f"{drift_report.get('drifted_feature_count', 0)} / {drift_report.get('total_features', 8)}")
+    d_c2.metric("Drift Share", f"{drift_report.get('drift_share', 0.0)}%", delta=f"{drift_report.get('drift_share', 0.0)}%" if drift_report.get("dataset_drift_detected") else "Normal", delta_color="inverse")
+    d_c3.metric("Production Sample Window", f"{drift_report.get('sample_size', 0)} events")
+    d_c4.metric("Statistical Methods", "PSI + KS-Test + Wasserstein")
+
+    st.divider()
+
+    # 3. Feature Drift Scorecard Table
+    st.markdown("##### 🔬 Feature-Level Stability Matrix")
+    st.caption("PSI Rule-of-Thumb: **< 0.10** Stable | **0.10 - 0.20** Moderate Shift | **≥ 0.20** Critical Drift. KS Test: Flagged when **p-value < 0.01** & **statistic ≥ 0.20**.")
+
+    feats = drift_report.get("features", {})
+    if feats:
+        rows = []
+        for fname, m in feats.items():
+            status_badge = "🟢 STABLE"
+            if m.get("status") == "CRITICAL_DRIFT":
+                status_badge = "🔴 CRITICAL DRIFT"
+            elif m.get("status") == "MODERATE_SHIFT":
+                status_badge = "🟡 MODERATE SHIFT"
+
+            rows.append({
+                "Feature Name": fname,
+                "Status": status_badge,
+                "PSI Score": round(m.get("psi_score", 0.0), 4),
+                "KS Statistic": round(m.get("ks_statistic", 0.0), 4),
+                "KS p-value": round(m.get("ks_p_value", 1.0), 5),
+                "Wasserstein Distance": round(m.get("wasserstein_distance", 0.0), 4),
+                "Drift Detected": "⚠️ YES" if m.get("drift_detected") else "✅ NO",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # 4. Interactive Distribution Overlay Visualizer
+    st.markdown("##### 📊 Interactive Distribution Comparison: Baseline Reference vs. Production")
+    feature_choices = list(feats.keys()) if feats else ["amount", "geo_distance_velocity_kmh", "tx_count_last_10m", "amount_deviation_from_avg"]
+    selected_feat = st.selectbox("Select Feature to Inspect Distribution Overlay:", feature_choices, index=0)
+
+    dist_data = fetch_drift_distribution(selected_feat, limit=300)
+    ref_vals = dist_data.get("reference", [])
+    curr_vals = dist_data.get("current", [])
+
+    if len(ref_vals) > 0 and len(curr_vals) > 0:
+        fig_dist = go.Figure()
+        fig_dist.add_trace(go.Histogram(
+            x=ref_vals,
+            name="Training Baseline (Reference)",
+            opacity=0.6,
+            marker_color="#3b82f6",
+            histnorm="probability density"
+        ))
+        fig_dist.add_trace(go.Histogram(
+            x=curr_vals,
+            name="Streaming Production (Current)",
+            opacity=0.6,
+            marker_color="#ef4444" if feats.get(selected_feat, {}).get("drift_detected") else "#10b981",
+            histnorm="probability density"
+        ))
+        fig_dist.update_layout(
+            barmode="overlay",
+            title=f"Distribution Density: '{selected_feat}' (Baseline vs Production)",
+            xaxis_title=selected_feat,
+            yaxis_title="Probability Density",
+            template="plotly_dark",
+            margin=dict(l=20, r=20, t=40, b=20),
+            legend=dict(x=0.75, y=0.95),
+        )
+        st.plotly_chart(fig_dist, use_container_width=True)
+    elif len(curr_vals) == 0:
+        st.info(f"Awaiting production transactions to compute density overlay for '{selected_feat}'. Use the simulation buttons below to generate data.")
+
+    st.divider()
+
+    # 5. Live Drift Simulation Controls
+    st.markdown("##### 🧪 Real-World Distribution Shift Injection Studio")
+    st.caption("Simulate sudden external macroeconomic shifts or localized coordinated attack bursts to watch the drift radar detect divergence in real-time.")
+
+    s_c1, s_c2, s_c3 = st.columns(3)
+    with s_c1:
+        if st.button("⚡ Inject 50x Luxury Amount Surge ($3k-$9k)", use_container_width=True):
+            try:
+                requests.post(f"{API_BASE_URL}/v1/analytics/drift/simulate-shift?shift_type=amount_surge&count=50", timeout=3.0)
+                st.success("Injected 50 luxury amount surge events via API!")
+            except Exception:
+                now = time.time()
+                for i in range(50):
+                    amt = float(np.random.uniform(3000.0, 9500.0))
+                    raw_tx = RawTransaction(
+                        transaction_id=f"tx_shift_amt_{uuid.uuid4().hex[:6]}",
+                        card_id=f"card_shift_{i%5}",
+                        user_id=f"usr_shift_{i%5}",
+                        amount=amt,
+                        currency="USD",
+                        merchant_id="m_luxury",
+                        merchant_category="luxury_goods",
+                        latitude=40.71,
+                        longitude=-74.00,
+                        timestamp=now + (i*0.1)
+                    )
+                    enr = feature_mgr.enrich(raw_tx)
+                    pred = local_predictor.predict(enr)
+                    store.insert_scored_transaction(enr, pred)
+                st.success("Locally injected 50 amount surge events into DuckDB!")
+            st.rerun()
+
+    with s_c2:
+        if st.button("⚡ Inject 50x High-Velocity Flight Bursts", use_container_width=True):
+            try:
+                requests.post(f"{API_BASE_URL}/v1/analytics/drift/simulate-shift?shift_type=velocity_spike&count=50", timeout=3.0)
+                st.success("Injected 50 velocity spike events via API!")
+            except Exception:
+                now = time.time()
+                for i in range(50):
+                    raw_tx = RawTransaction(
+                        transaction_id=f"tx_shift_vel_{uuid.uuid4().hex[:6]}",
+                        card_id=f"card_shift_{i%3}",
+                        user_id=f"usr_shift_{i%3}",
+                        amount=float(np.random.uniform(150.0, 750.0)),
+                        currency="USD",
+                        merchant_id="m_travel",
+                        merchant_category="electronics",
+                        latitude=35.6762 if (i % 2 == 0) else 40.7128,
+                        longitude=139.6503 if (i % 2 == 0) else -74.0060,
+                        timestamp=now + (i*0.1)
+                    )
+                    enr = feature_mgr.enrich(raw_tx)
+                    pred = local_predictor.predict(enr)
+                    store.insert_scored_transaction(enr, pred)
+                st.success("Locally injected 50 velocity spike events into DuckDB!")
+            st.rerun()
+
+    with s_c3:
+        if st.button("⚡ Inject 50x Crypto Arbitrage Transactions", use_container_width=True):
+            try:
+                requests.post(f"{API_BASE_URL}/v1/analytics/drift/simulate-shift?shift_type=crypto_boom&count=50", timeout=3.0)
+                st.success("Injected 50 crypto surge events via API!")
+            except Exception:
+                now = time.time()
+                for i in range(50):
+                    raw_tx = RawTransaction(
+                        transaction_id=f"tx_shift_cry_{uuid.uuid4().hex[:6]}",
+                        card_id=f"card_shift_{i%4}",
+                        user_id=f"usr_shift_{i%4}",
+                        amount=float(np.random.uniform(1200.0, 4500.0)),
+                        currency="USD",
+                        merchant_id="m_crypto",
+                        merchant_category="crypto_exchange",
+                        latitude=51.5074,
+                        longitude=-0.1278,
+                        timestamp=now + (i*0.1)
+                    )
+                    enr = feature_mgr.enrich(raw_tx)
+                    pred = local_predictor.predict(enr)
+                    store.insert_scored_transaction(enr, pred)
+                st.success("Locally injected 50 crypto surge events into DuckDB!")
+            st.rerun()
+
+# --- TAB 7: Model Explainability & Thresholds ---
 with tab_model:
     st.subheader("Model Performance & Threshold Calibration")
     st.markdown("Explore cost-sensitive XGBoost feature importances and decision boundary tuning.")

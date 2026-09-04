@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 import time
 
@@ -75,4 +75,27 @@ class DLQSummaryResponse(BaseModel):
     pending_events: int
     replayed_events: int
     discarded_events: int
+
+
+class FeatureDriftMetric(BaseModel):
+    """Statistical drift analysis for an individual numerical feature."""
+    feature_name: str
+    psi_score: float = Field(..., description="Population Stability Index (<0.1 stable, >=0.2 significant drift)")
+    ks_statistic: float = Field(..., description="Two-sample Kolmogorov-Smirnov test statistic")
+    ks_p_value: float = Field(..., description="p-value for KS test")
+    wasserstein_distance: float = Field(..., description="Earth Mover's Distance between distributions")
+    drift_detected: bool = Field(..., description="True if PSI >= 0.20 or (KS stat >= 0.15 and p_val < 0.05)")
+    status: str = Field(..., description="STABLE | MODERATE_SHIFT | CRITICAL_DRIFT")
+
+
+class DriftReportResponse(BaseModel):
+    """Overall dataset and feature-level concept drift telemetry."""
+    dataset_drift_detected: bool
+    drifted_feature_count: int
+    total_features: int
+    drift_share: float = Field(..., description="Percentage of monitored features exhibiting significant drift")
+    features: Dict[str, FeatureDriftMetric]
+    sample_size: int = Field(..., description="Number of production transactions analyzed")
+    timestamp: float = Field(default_factory=time.time)
+
 

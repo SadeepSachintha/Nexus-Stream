@@ -198,6 +198,13 @@ def train_model(save_dir: str = "src/inference/model"):
         json.dump(meta, f, indent=2)
     print(f"[+] Model metadata written to: {meta_path}")
 
+    # Save baseline reference samples for statistical drift calculations
+    ref_path = os.path.join(save_dir, "baseline_reference.json")
+    ref_samples = X_val.sample(n=min(2000, len(X_val)), random_state=42).to_dict(orient="list")
+    with open(ref_path, "w") as f:
+        json.dump(ref_samples, f)
+    print(f"[+] Baseline reference distribution saved to: {ref_path}")
+
     return model, meta
 
 
