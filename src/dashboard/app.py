@@ -151,7 +151,7 @@ st.sidebar.markdown("""
     </div>
     <div>
         <h2 style="margin: 0; font-size: 1.45rem; font-weight: 800; color: #f8fafc; letter-spacing: -0.02em;">Nexus Stream</h2>
-        <span style="font-size: 0.8rem; color: #94a3b8; font-weight: 500;">Real-Time Fraud Engine</span>
+        <span style="font-size: 0.72rem; color: #c084fc; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">A Product of SS Labz</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -188,11 +188,17 @@ st.sidebar.markdown("""
 - 🌊 **Apache Flink**: Stateful Windows
 - 🚀 **FastAPI + XGBoost**: <15ms Scoring
 - 🦆 **DuckDB**: Columnar OLAP
-""")
+
+<div style="margin-top: 24px; padding: 10px; background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.25); border-radius: 8px; text-align: center;">
+    <div style="font-size: 0.72rem; font-weight: 700; color: #c084fc; text-transform: uppercase; letter-spacing: 0.08em;">SS LABZ INNOVATION</div>
+    <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 3px;">Lead Engineer: Sadeep Sachintha</div>
+</div>
+""", unsafe_allow_html=True)
 
 
 # --- Main Dashboard ---
 st.title("💳 Nexus Stream: Real-Time Fraud Operations")
+st.caption("A Flagship Real-Time Stream Processing & MLOps Product of **SS Labz**")
 st.markdown("Sub-second event-driven financial fraud detection, dispute triage, and live behavioral analysis.")
 
 # Top Metrics Row

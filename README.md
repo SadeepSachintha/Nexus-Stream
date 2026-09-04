@@ -1,7 +1,9 @@
 # 💳 Nexus Stream: Real-Time Financial Fraud Detection Engine
+### *A Product of SS Labz*
 
-An enterprise-grade, event-driven, sub-second fraud detection platform combining stateful stream processing with machine learning inference at scale.
+An enterprise-grade, event-driven, sub-second fraud detection platform combining stateful stream processing with machine learning inference at scale. Developed and maintained by **SS Labz**.
 
+[![SS Labz](https://img.shields.io/badge/Product_of-SS_Labz-8b5cf6.svg?style=flat&logo=codeforces&logoColor=white)](https://github.com/SadeepSachintha)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![CI Pipeline](https://github.com/SadeepSachintha/Nexus-Stream/actions/workflows/ci.yml/badge.svg)](https://github.com/SadeepSachintha/Nexus-Stream/actions/workflows/ci.yml)
 [![Apache Flink](https://img.shields.io/badge/Apache_Flink-1.18-E6526F.svg?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
@@ -551,10 +553,11 @@ Calculates real-time statistical feature drift (PSI, Two-Sample KS-test, and Was
 
 ---
 
-## 11. License & Author
+## 11. License & Brand
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
-* **Author**: [Sadeep Sachintha](https://github.com/SadeepSachintha)
+* **Product Of**: **SS Labz**
+* **Author / Lead Engineer**: [Sadeep Sachintha](https://github.com/SadeepSachintha)
 * **Project Repository**: [Nexus-Stream](https://github.com/SadeepSachintha/Nexus-Stream)
-* **Domain**: Real-Time Stream Processing, MLOps, Data Engineering
+* **Domain**: Real-Time Stream Processing, MLOps, Data Engineering, Distributed Systems

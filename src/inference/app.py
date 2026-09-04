@@ -78,8 +78,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Nexus Stream: Fraud Detection Inference Gateway",
-    description="Sub-second low-latency financial fraud detection engine with XGBoost C-API execution.",
+    title="Nexus Stream (by SS Labz) - Fraud Detection Inference Gateway",
+    description="Sub-second low-latency financial fraud detection engine with XGBoost C-API execution. A Product of SS Labz.",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -273,11 +273,11 @@ LANDING_PAGE_HTML = """<!DOCTYPE html>
     <div class="header">
       <div class="badge">
         <span class="pulse-dot"></span>
-        Gateway Active &bull; Sub-15ms Latency SLA Guaranteed
+        SS Labz Flagship Engine &bull; Sub-15ms Latency SLA Guaranteed
       </div>
       <h1>Nexus Stream Gateway</h1>
       <p class="subtitle">
-        Enterprise real-time fraud detection inference engine with XGBoost C-API execution, bipartite graph rings, and DuckDB OLAP persistence.
+        Enterprise real-time fraud detection inference engine with XGBoost C-API execution, bipartite graph rings, and DuckDB OLAP persistence. <strong>A Product of SS Labz</strong>.
       </p>
     </div>
 
@@ -377,7 +377,7 @@ LANDING_PAGE_HTML = """<!DOCTYPE html>
     </div>
 
     <div class="footer">
-      Nexus Stream Engine &bull; Developed by <a href="https://github.com/SadeepSachintha" target="_blank">Sadeep Sachintha</a> &bull; Sub-15ms P99 SLA
+      Nexus Stream &bull; A Product of <strong>SS Labz</strong> &bull; Developed by <a href="https://github.com/SadeepSachintha" target="_blank">Sadeep Sachintha</a> &bull; Sub-15ms P99 SLA
     </div>
   </div>
 </body>

@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title Nexus Stream - Real-Time Financial Fraud Detection Engine
+title Nexus Stream [SS Labz] - Real-Time Financial Fraud Detection Engine
 set "PYTHONPATH=%~dp0"
 
 :: Locate Virtual Environment
@@ -45,7 +45,7 @@ if not "%~1"=="" (
 :menu
 cls
 echo ========================================================================
-echo   [NEXUS STREAM] Real-Time Financial Fraud Detection Platform
+echo   [NEXUS STREAM by SS LABZ] Real-Time Financial Fraud Platform
 echo ========================================================================
 echo.
 echo   CORE SERVICES:
