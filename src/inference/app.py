@@ -12,7 +12,11 @@ from src.streaming.schemas import (
     EnrichedTransaction,
     FraudPredictionResponse,
     AnalyticsSummaryResponse,
+    DeadLetterEvent,
+    DLQSummaryResponse,
 )
+import json
+import uuid
 from src.streaming.features import StreamFeatureStateManager
 from src.inference.predictor import FraudPredictor
 from src.inference.train import train_model
@@ -170,3 +174,113 @@ def resolve_alert(alert_id: str, new_status: str = Query(..., pattern="^(CONFIRM
 def prometheus_metrics() -> Response:
     """Exposes Prometheus scrape endpoint."""
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+# --- Dead-Letter Queue (DLQ) Management Endpoints ---
+
+@app.get("/v1/dlq", tags=["Dead-Letter Queue"])
+def list_dlq_events(
+    status: Optional[str] = Query(default=None, pattern="^(PENDING|REPLAYED|DISCARDED)$"),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> List[Dict[str, Any]]:
+    """Lists captured poison pills with optional status filter."""
+    if store is None:
+        raise HTTPException(status_code=503, detail="Analytics store not initialized")
+    return store.get_dlq_events(status=status, limit=limit)
+
+
+@app.get("/v1/dlq/summary", response_model=DLQSummaryResponse, tags=["Dead-Letter Queue"])
+def get_dlq_summary() -> DLQSummaryResponse:
+    """Retrieves operational telemetry on poison pills and replay metrics."""
+    if store is None:
+        raise HTTPException(status_code=503, detail="Analytics store not initialized")
+    return store.get_dlq_summary()
+
+
+@app.post("/v1/dlq/{dlq_id}/replay", response_model=FraudPredictionResponse, tags=["Dead-Letter Queue"])
+def replay_dlq_event(
+    dlq_id: str,
+    corrected_payload: Optional[Dict[str, Any]] = None
+) -> FraudPredictionResponse:
+    """
+    Replays a dead-letter payload through feature enrichment and scoring.
+    Accepts an optional corrected JSON body if the original raw payload was malformed.
+    """
+    if store is None or feature_manager is None or predictor is None:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    dlq_event = store.get_dlq_event_by_id(dlq_id)
+    if not dlq_event:
+        raise HTTPException(status_code=404, detail=f"DLQ event '{dlq_id}' not found")
+
+    # Use corrected payload or parse stored raw payload
+    if corrected_payload:
+        data = corrected_payload
+    else:
+        try:
+            data = json.loads(dlq_event["raw_payload"])
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot replay directly: raw payload contains malformed JSON ({e}). Provide a corrected JSON body."
+            )
+
+    try:
+        raw_tx = RawTransaction(**data)
+    except Exception as e:
+        store.update_dlq_status(dlq_id, "PENDING", increment_retry=True)
+        raise HTTPException(status_code=422, detail=f"Replay validation error: {e}")
+
+    # Re-ingest and score
+    scored_res = ingest_and_score_raw(raw_tx)
+
+    # Mark DLQ event as REPLAYED
+    store.update_dlq_status(dlq_id, "REPLAYED", increment_retry=True)
+
+    return scored_res
+
+
+@app.delete("/v1/dlq/{dlq_id}", tags=["Dead-Letter Queue"])
+def discard_dlq_event(dlq_id: str) -> Dict[str, Any]:
+    """Marks a poisoned event as DISCARDED."""
+    if store is None:
+        raise HTTPException(status_code=503, detail="Analytics store not initialized")
+    success = store.update_dlq_status(dlq_id, "DISCARDED")
+    return {"dlq_id": dlq_id, "status": "DISCARDED", "updated": success}
+
+
+@app.post("/v1/dlq/inject-test", response_model=DeadLetterEvent, tags=["Dead-Letter Queue"])
+def inject_test_poison_pill(poison_type: str = Query(default="malformed_json", pattern="^(malformed_json|missing_field|corrupt_amount)$")) -> DeadLetterEvent:
+    """Simulates and isolates a poison pill directly to demonstrate zero-crash DLQ handling."""
+    if store is None:
+        raise HTTPException(status_code=503, detail="Analytics store not initialized")
+
+    dlq_id = f"dlq_test_{uuid.uuid4().hex[:8]}"
+    now = time.time()
+
+    if poison_type == "malformed_json":
+        raw_payload = '{"transaction_id": "tx_bad", "amount": 100.0, "unclosed_json...'
+        error_type = "MALFORMED_JSON"
+        error_msg = "JSONDecodeError: Unterminated string starting at line 1 column 47"
+    elif poison_type == "missing_field":
+        raw_payload = json.dumps({"user_id": "usr_incomplete", "category": "crypto"})
+        error_type = "SCHEMA_VALIDATION_ERROR"
+        error_msg = "ValidationError: Field required: 'transaction_id', 'card_id', 'amount'"
+    else:
+        raw_payload = json.dumps({"transaction_id": "tx_corrupt", "card_id": "c1", "user_id": "u1", "amount": -999.0, "merchant_id": "m1", "merchant_category": "crypto", "latitude": 0, "longitude": 0})
+        error_type = "SCHEMA_VALIDATION_ERROR"
+        error_msg = "ValidationError: amount must be greater than 0"
+
+    event = DeadLetterEvent(
+        dlq_id=dlq_id,
+        source_topic="transactions.raw",
+        error_type=error_type,
+        error_message=error_msg,
+        raw_payload=raw_payload,
+        retry_count=0,
+        status="PENDING",
+        timestamp=now,
+    )
+    store.insert_dlq_event(event)
+    return event
+

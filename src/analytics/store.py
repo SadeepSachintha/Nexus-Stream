@@ -10,6 +10,8 @@ from src.streaming.schemas import (
     EnrichedTransaction,
     FraudPredictionResponse,
     AnalyticsSummaryResponse,
+    DeadLetterEvent,
+    DLQSummaryResponse,
 )
 
 
@@ -85,6 +87,21 @@ class DuckDBAnalyticsStore:
                         action VARCHAR,
                         top_risk_factors VARCHAR,
                         status VARCHAR DEFAULT 'UNREVIEWED',
+                        timestamp DOUBLE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+
+                # 4. Dead-Letter Queue (DLQ) table for poison pills
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS dlq_events (
+                        dlq_id VARCHAR PRIMARY KEY,
+                        source_topic VARCHAR,
+                        error_type VARCHAR,
+                        error_message VARCHAR,
+                        raw_payload VARCHAR,
+                        retry_count INTEGER DEFAULT 0,
+                        status VARCHAR DEFAULT 'PENDING',
                         timestamp DOUBLE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
@@ -265,3 +282,102 @@ class DuckDBAnalyticsStore:
                 return df.to_dict(orient="records")
             finally:
                 conn.close()
+
+    # --- Dead-Letter Queue (DLQ) Operations ---
+
+    def insert_dlq_event(self, event: DeadLetterEvent) -> None:
+        """Sinks a poisoned or malformed payload into the DLQ table."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("""
+                    INSERT OR REPLACE INTO dlq_events (
+                        dlq_id, source_topic, error_type, error_message,
+                        raw_payload, retry_count, status, timestamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    event.dlq_id, event.source_topic, event.error_type,
+                    event.error_message, event.raw_payload, event.retry_count,
+                    event.status, event.timestamp
+                ))
+            finally:
+                conn.close()
+
+    def get_dlq_events(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieves dead-letter events with optional status filtering (PENDING, REPLAYED, DISCARDED)."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                if status:
+                    df = conn.execute("""
+                        SELECT * FROM dlq_events
+                        WHERE status = ?
+                        ORDER BY timestamp DESC
+                        LIMIT ?
+                    """, (status, limit)).fetchdf()
+                else:
+                    df = conn.execute("""
+                        SELECT * FROM dlq_events
+                        ORDER BY timestamp DESC
+                        LIMIT ?
+                    """, (limit,)).fetchdf()
+                return df.to_dict(orient="records")
+            finally:
+                conn.close()
+
+    def get_dlq_event_by_id(self, dlq_id: str) -> Optional[Dict[str, Any]]:
+        """Finds a single DLQ event by ID."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                res = conn.execute("SELECT * FROM dlq_events WHERE dlq_id = ?", (dlq_id,)).fetchdf()
+                if not res.empty:
+                    return res.to_dict(orient="records")[0]
+                return None
+            finally:
+                conn.close()
+
+    def update_dlq_status(self, dlq_id: str, new_status: str, increment_retry: bool = False) -> bool:
+        """Updates DLQ record status and optionally increments the retry counter."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                if increment_retry:
+                    conn.execute("""
+                        UPDATE dlq_events
+                        SET status = ?, retry_count = retry_count + 1
+                        WHERE dlq_id = ?
+                    """, (new_status, dlq_id))
+                else:
+                    conn.execute("""
+                        UPDATE dlq_events
+                        SET status = ?
+                        WHERE dlq_id = ?
+                    """, (new_status, dlq_id))
+                return True
+            finally:
+                conn.close()
+
+    def get_dlq_summary(self) -> DLQSummaryResponse:
+        """Returns aggregate metrics on poison pills and replay status."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                query = """
+                    SELECT 
+                        COUNT(*) as total_events,
+                        COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) as pending_cnt,
+                        COALESCE(SUM(CASE WHEN status = 'REPLAYED' THEN 1 ELSE 0 END), 0) as replayed_cnt,
+                        COALESCE(SUM(CASE WHEN status = 'DISCARDED' THEN 1 ELSE 0 END), 0) as discarded_cnt
+                    FROM dlq_events
+                """
+                res = conn.execute(query).fetchone()
+                return DLQSummaryResponse(
+                    total_dlq_events=int(res[0]) if res and res[0] else 0,
+                    pending_events=int(res[1]) if res and res[1] else 0,
+                    replayed_events=int(res[2]) if res and res[2] else 0,
+                    discarded_events=int(res[3]) if res and res[3] else 0,
+                )
+            finally:
+                conn.close()
+

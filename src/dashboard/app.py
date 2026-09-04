@@ -207,11 +207,12 @@ with c5:
 st.write("")
 
 # Navigation Tabs
-tab_alerts, tab_analytics, tab_simulator, tab_graph, tab_model = st.tabs([
+tab_alerts, tab_analytics, tab_simulator, tab_graph, tab_dlq, tab_model = st.tabs([
     "🚨 Live Alerts & Dispute Triage",
     "📊 Real-Time Analytics & Risk Matrix",
     "⚡ Instant Transaction Scoring Lab",
     "🕸️ Fraud Ring Network Explorer",
+    "⚠️ Dead-Letter Queue (DLQ)",
     "🎯 Model Explainability & Thresholds"
 ])
 
@@ -512,7 +513,133 @@ with tab_graph:
             st.success(f"Injected 5-card fraud ring originating from device '{shared_dev}'!")
             st.rerun()
 
-# --- TAB 5: Model Explainability & Thresholds ---
+# --- TAB 5: Dead-Letter Queue (DLQ) & Poison Pill Workbench ---
+with tab_dlq:
+    st.subheader("⚠️ Dead-Letter Queue (DLQ) & Poison Pill Isolation")
+    st.markdown("Isolates malformed payloads, schema contract violations, and corrupted encodings to prevent consumer lag spikes.")
+
+    dlq_summary = store.get_dlq_summary()
+    d_c1, d_c2, d_c3, d_c4 = st.columns(4)
+    d_c1.metric("Total Poison Pills Isolated", f"{dlq_summary.total_dlq_events:,}")
+    d_c2.metric("Pending Review", f"{dlq_summary.pending_events:,}", delta="Attention Needed" if dlq_summary.pending_events > 0 else "All Clean")
+    d_c3.metric("Successfully Replayed", f"{dlq_summary.replayed_events:,}")
+    d_c4.metric("Discarded / Dropped", f"{dlq_summary.discarded_events:,}")
+
+    st.write("")
+
+    dlq_filter = st.selectbox("Filter DLQ Events by Status", ["All Incidents", "PENDING", "REPLAYED", "DISCARDED"])
+    status_arg = None if dlq_filter == "All Incidents" else dlq_filter
+    dlq_items = store.get_dlq_events(status=status_arg, limit=50)
+
+    if not dlq_items:
+        st.info("No dead-letter events found matching filter. Use the simulation buttons below to test poison pill isolation.")
+    else:
+        df_dlq = pd.DataFrame(dlq_items)
+        col_q_table, col_q_detail = st.columns([1.3, 1.1])
+
+        with col_q_table:
+            st.markdown("##### Isolated Poison Pill Records")
+            st.dataframe(
+                df_dlq[["dlq_id", "error_type", "status", "retry_count", "source_topic"]],
+                column_config={
+                    "dlq_id": st.column_config.TextColumn("Incident ID"),
+                    "error_type": st.column_config.TextColumn("Failure Category"),
+                    "status": st.column_config.TextColumn("Status"),
+                    "retry_count": st.column_config.NumberColumn("Retries"),
+                },
+                use_container_width=True,
+                height=380,
+            )
+
+        with col_q_detail:
+            st.markdown("##### Diagnostic Inspector & Replay Action")
+            selected_dlq_id = st.selectbox("Select DLQ Record to Inspect", df_dlq["dlq_id"].tolist())
+            dlq_row = df_dlq[df_dlq["dlq_id"] == selected_dlq_id].iloc[0]
+
+            with st.container(border=True):
+                st.markdown(f"**DLQ ID:** `{dlq_row['dlq_id']}`")
+                st.markdown(f"**Failure Type:** `{dlq_row['error_type']}`")
+                st.markdown(f"**Status:** `{dlq_row['status']}` | **Retries:** `{dlq_row['retry_count']}`")
+                st.error(f"**Diagnostic Error:**\n{dlq_row['error_message']}")
+
+                st.markdown("**Raw Corrupted Payload:**")
+                st.code(dlq_row['raw_payload'], language="json")
+
+                st.markdown("---")
+                col_btn_rep, col_btn_disc = st.columns(2)
+                with col_btn_rep:
+                    if st.button("🔁 Replay & Score", key=f"rep_{selected_dlq_id}", use_container_width=True):
+                        try:
+                            payload_dict = json.loads(dlq_row['raw_payload'])
+                            raw_tx = RawTransaction(**payload_dict)
+                            enriched = feature_mgr.enrich(raw_tx)
+                            res = local_predictor.predict(enriched)
+                            store.insert_scored_transaction(enriched, res)
+                            store.update_dlq_status(selected_dlq_id, "REPLAYED", increment_retry=True)
+                            st.success(f"Successfully replayed and scored! Decision: {res.prediction}")
+                            st.rerun()
+                        except Exception as ex:
+                            store.update_dlq_status(selected_dlq_id, "PENDING", increment_retry=True)
+                            st.warning(f"Replay failed: {ex}. Payload still requires manual fix.")
+                with col_btn_disc:
+                    if st.button("🗑️ Discard Incident", key=f"disc_{selected_dlq_id}", use_container_width=True):
+                        store.update_dlq_status(selected_dlq_id, "DISCARDED")
+                        st.info("Marked incident as DISCARDED.")
+                        st.rerun()
+
+    st.markdown("---")
+    st.markdown("##### 🧪 Poison Pill Simulation Lab")
+    c_p1, c_p2, c_p3 = st.columns(3)
+    from src.streaming.schemas import DeadLetterEvent
+    with c_p1:
+        if st.button("⚡ Inject Malformed JSON String", use_container_width=True):
+            dlq_ev = DeadLetterEvent(
+                dlq_id=f"dlq_badjson_{int(time.time()*1000)}",
+                source_topic="transactions.raw",
+                error_type="MALFORMED_JSON",
+                error_message="JSONDecodeError: Unterminated string starting at line 1 column 48",
+                raw_payload='{"transaction_id": "tx_unclosed", "amount": 250.0, "corrupt...',
+                retry_count=0,
+                status="PENDING",
+                timestamp=time.time()
+            )
+            store.insert_dlq_event(dlq_ev)
+            st.success("Injected malformed JSON poison pill!")
+            st.rerun()
+
+    with c_p2:
+        if st.button("⚡ Inject Missing Mandatory Fields", use_container_width=True):
+            dlq_ev = DeadLetterEvent(
+                dlq_id=f"dlq_missing_{int(time.time()*1000)}",
+                source_topic="transactions.raw",
+                error_type="SCHEMA_VALIDATION_ERROR",
+                error_message="ValidationError: Field required: 'transaction_id', 'card_id', 'amount'",
+                raw_payload=json.dumps({"user_id": "usr_broken", "notes": "client_app_v1_bug"}),
+                retry_count=0,
+                status="PENDING",
+                timestamp=time.time()
+            )
+            store.insert_dlq_event(dlq_ev)
+            st.success("Injected schema contract violation!")
+            st.rerun()
+
+    with c_p3:
+        if st.button("⚡ Inject Negative Monetary Amount", use_container_width=True):
+            dlq_ev = DeadLetterEvent(
+                dlq_id=f"dlq_neg_{int(time.time()*1000)}",
+                source_topic="transactions.raw",
+                error_type="SCHEMA_VALIDATION_ERROR",
+                error_message="ValidationError: Input should be greater than 0 [amount: -4500.00]",
+                raw_payload=json.dumps({"transaction_id": "tx_neg_val", "user_id": "usr_hacker", "card_id": "card_01", "amount": -4500.0, "merchant_id": "m1", "merchant_category": "crypto", "latitude": 40.71, "longitude": -74.00}),
+                retry_count=0,
+                status="PENDING",
+                timestamp=time.time()
+            )
+            store.insert_dlq_event(dlq_ev)
+            st.success("Injected negative amount poison pill!")
+            st.rerun()
+
+# --- TAB 6: Model Explainability & Thresholds ---
 with tab_model:
     st.subheader("Model Performance & Threshold Calibration")
     st.markdown("Explore cost-sensitive XGBoost feature importances and decision boundary tuning.")

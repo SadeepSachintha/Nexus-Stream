@@ -55,3 +55,24 @@ class AnalyticsSummaryResponse(BaseModel):
     fraud_rate_percentage: float
     avg_processing_latency_ms: float
     prevented_capital_loss_usd: float
+
+
+class DeadLetterEvent(BaseModel):
+    """Dead-letter event capturing poison pills and malformed transactions for audit and replay."""
+    dlq_id: str = Field(..., description="Unique dead-letter record identifier")
+    source_topic: str = Field(default="transactions.raw", description="Originating event stream")
+    error_type: str = Field(..., description="MALFORMED_JSON | SCHEMA_VALIDATION_ERROR | PROCESSING_FAILURE")
+    error_message: str = Field(..., description="Detailed diagnostic error message or trace")
+    raw_payload: str = Field(..., description="Raw string payload that failed execution")
+    retry_count: int = Field(default=0, description="Number of times replay has been attempted")
+    status: str = Field(default="PENDING", description="PENDING | REPLAYED | DISCARDED")
+    timestamp: float = Field(default_factory=time.time)
+
+
+class DLQSummaryResponse(BaseModel):
+    """Telemetry metrics on captured poison pills."""
+    total_dlq_events: int
+    pending_events: int
+    replayed_events: int
+    discarded_events: int
+

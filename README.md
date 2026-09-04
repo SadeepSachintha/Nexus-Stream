@@ -140,6 +140,11 @@ flowchart LR
 * Maintains a real-time in-memory bipartite graph mapping relationships between `cards` and `devices` across a rolling 24-hour event-time window.
 * Automatically identifies automated botnets and synthetic identity syndicates (`device_card_count >= 3`), triggering instant policy overrides and visual network inspection in the Streamlit portal.
 
+### 5. Dead-Letter Queue (DLQ) & Poison Pill Isolation
+* Guarantees zero consumer crash-loops and zero stream stalls by catching malformed JSON strings, schema contract violations, and corrupted payloads.
+* Automatically diverts poisoned messages to `transactions.dlq` and DuckDB with diagnostic error traces while consumer offsets advance continuously.
+* Features a full operational replay workflow (`POST /v1/dlq/{dlq_id}/replay`) to re-score corrected payloads without audit data loss.
+
 ---
 
 ## 5. Repository Structure
@@ -175,10 +180,11 @@ nexus-stream/
 │   └── dashboard/                  # Streamlit dispute triage & live operations portal
 │       └── app.py                  # Real-time KPIs, triage workbench, and scoring lab
 ├── tests/
-│   ├── unit/                       # Unit tests for features, analytics, graph, and inference
+│   ├── unit/                       # Unit tests for features, analytics, graph, DLQ, and inference
 │   │   ├── test_features.py
 │   │   ├── test_analytics.py
 │   │   ├── test_graph_ring.py
+│   │   ├── test_dlq.py
 │   │   └── test_inference.py
 │   └── integration/                # End-to-end streaming pipeline test
 │       └── test_pipeline_e2e.py
@@ -294,23 +300,26 @@ make test
 
 ### Verified Test Results
 ```plaintext
-tests/integration/test_pipeline_e2e.py::test_full_pipeline_end_to_end PASSED [  6%]
-tests/unit/test_analytics.py::test_duckdb_raw_insertion PASSED           [ 13%]
-tests/unit/test_analytics.py::test_duckdb_scored_insertion_and_alerts PASSED [ 20%]
-tests/unit/test_features.py::test_haversine_distance PASSED              [ 26%]
-tests/unit/test_features.py::test_calculate_travel_velocity PASSED       [ 33%]
-tests/unit/test_features.py::test_category_risk PASSED                   [ 40%]
-tests/unit/test_features.py::test_card_sliding_window_state PASSED       [ 46%]
-tests/unit/test_graph_ring.py::test_bipartite_graph_ring_detection PASSED [ 53%]
-tests/unit/test_graph_ring.py::test_graph_ttl_pruning PASSED             [ 60%]
-tests/unit/test_graph_ring.py::test_feature_manager_graph_enrichment PASSED [ 66%]
-tests/unit/test_graph_ring.py::test_predictor_fraud_ring_policy_override PASSED [ 73%]
-tests/unit/test_inference.py::test_predictor_scoring_and_latency PASSED  [ 80%]
-tests/unit/test_inference.py::test_api_health_endpoint PASSED            [ 86%]
-tests/unit/test_inference.py::test_api_predict_endpoint PASSED           [ 93%]
+tests/integration/test_pipeline_e2e.py::test_full_pipeline_end_to_end PASSED [  5%]
+tests/unit/test_analytics.py::test_duckdb_raw_insertion PASSED           [ 11%]
+tests/unit/test_analytics.py::test_duckdb_scored_insertion_and_alerts PASSED [ 16%]
+tests/unit/test_dlq.py::test_dlq_duckdb_storage_and_summary PASSED       [ 22%]
+tests/unit/test_dlq.py::test_stream_processor_poison_pill_isolation PASSED [ 27%]
+tests/unit/test_dlq.py::test_api_dlq_lifecycle_and_replay PASSED         [ 33%]
+tests/unit/test_features.py::test_haversine_distance PASSED              [ 38%]
+tests/unit/test_features.py::test_calculate_travel_velocity PASSED       [ 44%]
+tests/unit/test_features.py::test_category_risk PASSED                   [ 50%]
+tests/unit/test_features.py::test_card_sliding_window_state PASSED       [ 55%]
+tests/unit/test_graph_ring.py::test_bipartite_graph_ring_detection PASSED [ 61%]
+tests/unit/test_graph_ring.py::test_graph_ttl_pruning PASSED             [ 66%]
+tests/unit/test_graph_ring.py::test_feature_manager_graph_enrichment PASSED [ 72%]
+tests/unit/test_graph_ring.py::test_predictor_fraud_ring_policy_override PASSED [ 77%]
+tests/unit/test_inference.py::test_predictor_scoring_and_latency PASSED  [ 83%]
+tests/unit/test_inference.py::test_api_health_endpoint PASSED            [ 88%]
+tests/unit/test_inference.py::test_api_predict_endpoint PASSED           [ 94%]
 tests/unit/test_inference.py::test_api_analytics_and_metrics PASSED      [100%]
 
-======================= 15 passed in 4.63s =======================
+======================= 18 passed in 5.70s =======================
 ```
 
 ---

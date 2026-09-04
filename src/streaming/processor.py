@@ -4,9 +4,10 @@ import os
 import sys
 import time
 from typing import Optional
+import uuid
 import requests
 
-from src.streaming.schemas import RawTransaction, EnrichedTransaction, FraudPredictionResponse
+from src.streaming.schemas import RawTransaction, EnrichedTransaction, FraudPredictionResponse, DeadLetterEvent
 from src.streaming.features import StreamFeatureStateManager
 from src.inference.predictor import FraudPredictor
 from src.analytics.store import DuckDBAnalyticsStore
@@ -31,6 +32,7 @@ class StreamProcessor:
         input_topic: str = "transactions.raw",
         output_topic: str = "transactions.enriched",
         alert_topic: str = "transactions.fraud-alerts",
+        dlq_topic: str = "transactions.dlq",
         inference_url: Optional[str] = "http://localhost:8000/v1/predict-fraud",
         db_path: str = "nexus_analytics.duckdb",
         use_local_predictor: bool = False,
@@ -39,6 +41,7 @@ class StreamProcessor:
         self.input_topic = input_topic
         self.output_topic = output_topic
         self.alert_topic = alert_topic
+        self.dlq_topic = dlq_topic
         self.inference_url = inference_url
         self.use_local_predictor = use_local_predictor
 
@@ -110,6 +113,33 @@ class StreamProcessor:
         tag = "🔴 [FRAUD]" if prediction.prediction == "FRAUD_SUSPECTED" else ("🟡 [REVIEW]" if prediction.prediction == "REVIEW_REQUIRED" else "🟢 [ALLOW]")
         print(f"{tag} {prediction.transaction_id} | Score: {prediction.fraud_probability:.3f} | Latency: {prediction.latency_ms:.2f}ms | Risk: {', '.join(prediction.top_risk_factors) if prediction.top_risk_factors else 'None'}")
 
+    def handle_poison_pill(self, raw_payload: str, error_type: str, error_msg: str) -> DeadLetterEvent:
+        """Isolates malformed payloads into DuckDB and Kafka DLQ topic without stalling offset progress."""
+        dlq_id = f"dlq_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
+        event = DeadLetterEvent(
+            dlq_id=dlq_id,
+            source_topic=self.input_topic,
+            error_type=error_type,
+            error_message=error_msg,
+            raw_payload=raw_payload,
+            retry_count=0,
+            status="PENDING",
+            timestamp=time.time(),
+        )
+
+        # Sinks to DuckDB
+        self.store.insert_dlq_event(event)
+
+        # Routes to Kafka DLQ Topic
+        if self.producer:
+            key = dlq_id.encode("utf-8")
+            val = json.dumps(event.model_dump()).encode("utf-8")
+            self.producer.produce(self.dlq_topic, key=key, value=val)
+            self.producer.poll(0)
+
+        print(f"⚠️ [POISON PILL -> DLQ] {dlq_id} | Type: {error_type} | Reason: {error_msg[:60]}")
+        return event
+
     def run(self) -> None:
         if not self.consumer:
             print("[!] Kafka consumer not initialized. Stream processor requires active broker.")
@@ -130,12 +160,27 @@ class StreamProcessor:
                         print(f"[!] Consumer error: {msg.error()}")
                         break
 
+                raw_str = msg.value().decode("utf-8", errors="replace")
+
+                # 1. Check for JSON decoding corruption
                 try:
-                    payload = json.loads(msg.value().decode("utf-8"))
+                    payload = json.loads(raw_str)
+                except json.JSONDecodeError as je:
+                    self.handle_poison_pill(raw_str, "MALFORMED_JSON", str(je))
+                    continue
+
+                # 2. Check for Pydantic schema validation failures
+                try:
                     raw_tx = RawTransaction(**payload)
+                except Exception as ve:
+                    self.handle_poison_pill(raw_str, "SCHEMA_VALIDATION_ERROR", str(ve))
+                    continue
+
+                # 3. Process business logic & handle runtime exceptions
+                try:
                     self.process_event(raw_tx)
-                except Exception as e:
-                    print(f"[!] Error processing event: {e}")
+                except Exception as pe:
+                    self.handle_poison_pill(raw_str, "PROCESSING_FAILURE", str(pe))
 
         except KeyboardInterrupt:
             print("\n[*] Stopping stream processor...")
