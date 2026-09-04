@@ -68,6 +68,17 @@ def test_predictor_scoring_and_latency():
     assert len(res_fraud.top_risk_factors) > 0
 
 
+def test_api_root_portal_and_favicon(client):
+    root_resp = client.get("/")
+    assert root_resp.status_code == 200
+    assert "Nexus Stream Gateway" in root_resp.text
+    assert "text/html" in root_resp.headers["content-type"]
+
+    ico_resp = client.get("/favicon.ico")
+    assert ico_resp.status_code == 200
+    assert "image/svg+xml" in ico_resp.headers["content-type"]
+
+
 def test_api_health_endpoint(client):
     response = client.get("/v1/health")
     assert response.status_code == 200

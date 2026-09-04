@@ -56,13 +56,13 @@ jobs:
         run: |
           python -m src.inference.train
 
-      - name: Execute Full Pytest Automated Suite (26 Tests)
+      - name: Execute Full Pytest Automated Suite (27 Tests)
         run: |
           pytest tests/ -v --durations=10
 
       - name: Verify Concurrency Benchmark & Sub-15ms Latency SLA
         run: |
-          python -m tests.load.benchmark_cli --requests 100 --concurrency 10 --in-process --endpoint /v1/predict-fraud --sla-ms 35
+          python -m tests.load.benchmark_cli --requests 100 --concurrency 10 --in-process --endpoint /v1/predict-fraud --sla-ms 15
 
   docker-build-verification:
     name: Container Build & Compose Validation

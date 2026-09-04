@@ -409,7 +409,7 @@ Nexus Stream features production-grade GitHub Actions workflows (`.github/workfl
    - Executes across a matrix of **Python 3.11** and **Python 3.12**.
    - Leverages `actions/cache` for pip wheels to accelerate runner execution.
    - Retrains the production XGBoost classifier dynamically (`train_model.py`).
-   - Runs the comprehensive test suite (`pytest -p no:locust -v`), validating all 26 unit, integration, and load smoke tests.
+   - Runs the comprehensive test suite (`pytest -p no:locust -v`), validating all 27 unit, integration, and load smoke tests.
    - **SLA Benchmark Enforcement**: Fires 500 concurrent in-process scoring requests via `tests.load.benchmark_cli` with a strict assertion: **P99 client latency must remain $< 15\text{ms}$**, failing the pipeline if any performance regression occurs.
 3. **Docker Compose & Container Build Verification (`docker-build-verification`)**:
    - Validates `docker-compose.yml` specification syntax via `docker compose config`.

@@ -1,6 +1,7 @@
 @echo off
+chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
-title Nexus Stream — Real-Time Financial Fraud Detection Engine
+title Nexus Stream - Real-Time Financial Fraud Detection Engine
 
 :: Locate Virtual Environment
 set "PYTHON=.venv\Scripts\python.exe"
@@ -89,8 +90,10 @@ goto menu
 :start_api
 echo.
 echo [*] Starting Nexus Stream FastAPI Gateway on http://localhost:8000...
-echo [*] Interactive Swagger Docs: http://localhost:8000/docs
-echo [*] Prometheus Metrics:     http://localhost:8000/metrics
+echo [*] Base Gateway Landing:     http://localhost:8000
+echo [*] Interactive Swagger Docs:  http://localhost:8000/docs
+echo [*] ReDoc Specification:      http://localhost:8000/redoc
+echo [*] Prometheus Metrics:        http://localhost:8000/metrics
 echo.
 "%PYTHON%" -m uvicorn src.inference.app:app --host 0.0.0.0 --port 8000 --reload
 if "%IS_CLI_MODE%"=="1" exit /b %errorlevel%

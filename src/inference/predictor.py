@@ -23,17 +23,20 @@ class FraudPredictor:
         self.booster: Optional[xgb.Booster] = None
         self.metadata: dict = {}
         self.load_model()
-
     def load_model(self) -> None:
         if os.path.exists(self.model_path):
             self.booster = xgb.Booster()
             self.booster.load_model(self.model_path)
+            self.booster.set_param({"nthread": 1})
             if os.path.exists(self.meta_path):
                 with open(self.meta_path, "r") as f:
                     self.metadata = json.load(f)
-            # Warm up C-API and OpenMP thread pool
+            # Warm up zero-copy C-API execution path
             dummy = np.zeros((1, len(FEATURE_NAMES)), dtype=np.float32)
-            self.booster.predict(xgb.DMatrix(dummy, feature_names=FEATURE_NAMES))
+            try:
+                self.booster.inplace_predict(dummy)
+            except Exception:
+                self.booster.predict(xgb.DMatrix(dummy, feature_names=FEATURE_NAMES))
         else:
             self.booster = None
 
@@ -83,10 +86,13 @@ class FraudPredictor:
             elif tx.tx_count_last_10m > 5:
                 prob = 0.65
         else:
-            # Optimized C-API execution path
+            # Optimized zero-copy C-API execution path
             feat_vector = self._extract_feature_vector(tx)
-            dmatrix = xgb.DMatrix(feat_vector, feature_names=FEATURE_NAMES)
-            raw_pred = self.booster.predict(dmatrix)
+            try:
+                raw_pred = self.booster.inplace_predict(feat_vector)
+            except Exception:
+                dmatrix = xgb.DMatrix(feat_vector, feature_names=FEATURE_NAMES)
+                raw_pred = self.booster.predict(dmatrix)
             prob = float(raw_pred[0])
 
         # Hybrid Policy Guardrail (Industry Standard for Physical Impossibility & Fraud Rings)
